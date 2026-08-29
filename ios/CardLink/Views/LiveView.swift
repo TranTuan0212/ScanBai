@@ -157,24 +157,60 @@ struct LiveView: View {
                 
                 // 4. Bottom Control Bar (Manual Capture, Torch, Switch Camera, Lock, Start/Stop)
                 VStack(spacing: 14) {
-                    // Manual Capture Button ("Nút Bóc Bài Thủ Công")
+                    // Dealing vs Shuffling Mode Controls & Manual Capture
                     if isLiveActive {
-                        Button(action: {
-                            if let img = latestUIImage {
-                                cardSlicer.manualCapture(img)
+                        HStack(spacing: 12) {
+                            // Mode Switch: ĐANG CHIA BÀI ↔ ĐANG XỐC BÀI
+                            Button(action: {
+                                cardSlicer.toggleDealingMode()
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: cardSlicer.isDealingActive ? "pause.circle.fill" : "play.circle.fill")
+                                        .font(.system(size: 14, weight: .bold))
+                                    Text(cardSlicer.isDealingActive ? "TẠM KHÓA (XỐC BÀI)" : "▶ BẮT ĐẦU CHIA")
+                                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(cardSlicer.isDealingActive ? Color.green : Color.orange))
+                                .shadow(color: (cardSlicer.isDealingActive ? Color.green : Color.orange).opacity(0.5), radius: 6)
                             }
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "camera.aperture")
-                                    .font(.system(size: 16, weight: .bold))
-                                Text("BÓC BÀI THỦ CÔNG")
-                                    .font(.system(size: 13, weight: .bold))
+                            
+                            // Reset Current Round ("CHIA LẠI VÁN NÀY")
+                            Button(action: {
+                                cardSlicer.reset()
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                                        .font(.system(size: 14, weight: .bold))
+                                    Text("CHIA LẠI")
+                                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Color.gray.opacity(0.8)))
                             }
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                            .background(Capsule().fill(Color.yellow))
-                            .shadow(color: .yellow.opacity(0.4), radius: 6, x: 0, y: 3)
+                            
+                            // Manual Capture ("BÓC THỦ CÔNG")
+                            Button(action: {
+                                if let img = latestUIImage {
+                                    cardSlicer.manualCapture(img)
+                                }
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "camera.aperture")
+                                        .font(.system(size: 14, weight: .bold))
+                                    Text("BÓC LÁ")
+                                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Color.yellow))
+                                .shadow(color: .yellow.opacity(0.5), radius: 6)
+                            }
                         }
                     }
                     
