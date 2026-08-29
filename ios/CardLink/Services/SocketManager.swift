@@ -78,6 +78,11 @@ final class iOSSocketManager: ObservableObject {
                 }
                 self.listenForMessages()
             case .failure(let error):
+                let nsErr = error as NSError
+                if nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled {
+                    // Ignore planned cancellation error (-999)
+                    return
+                }
                 print("❌ [iOS Socket] Receive error: \(error)")
                 DispatchQueue.main.async {
                     self.isConnected = false

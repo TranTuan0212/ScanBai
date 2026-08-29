@@ -287,7 +287,7 @@ struct LiveView: View {
     private func setupSlicerCallbacks() {
         cardSlicer.onCardExtracted = { slotNumber, roundIdx, cardIdx, isRoundComplete, imageBase64 in
             if isLiveActive {
-                let cardLabel = cardDetector.lastDetectedCard ?? "CARD #\(slotNumber)"
+                let cardLabel = "LÁ #\(slotNumber) (TỤ \(roundIdx) - LÁ \(cardIdx))"
                 socketManager.sendCardDetected(
                     sessionId: sessionId,
                     label: cardLabel,
@@ -310,6 +310,7 @@ struct LiveView: View {
         cardSlicer.reset()
         let token = APIService.shared.getAuthToken() ?? ""
         socketManager.connect(token: token)
+        socketManager.joinRoom(sessionId: self.sessionId)
         
         APIService.shared.startLiveSession { result in
             DispatchQueue.main.async {
@@ -319,9 +320,8 @@ struct LiveView: View {
                     self.socketManager.joinRoom(sessionId: resp.sessionId)
                     self.startHeartbeatTimer()
                 case .failure(let err):
-                    print("❌ [iOS API] Start session error: \(err)")
+                    print("⚠️ [iOS API] Start session API fallback: \(err)")
                     self.socketManager.joinRoom(sessionId: self.sessionId)
-                    self.startHeartbeatTimer()
                 }
             }
         }
