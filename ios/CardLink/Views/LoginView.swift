@@ -9,7 +9,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Binding var navigationState: NavigationState
-    @State private var serverIP = "192.168.1.3"
+    @State private var serverIP = DeviceUtils.getServerIP()
     @State private var username = "admin@cardlink.com"
     @State private var password = "password123"
     @State private var isLoading = false

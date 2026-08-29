@@ -3,7 +3,7 @@
 //  CardLink
 //
 //  Socket.IO v4 Compliant Client for iOS.
-//  Handles Engine.IO handshake (packet 0 -> 40), automatic room joining,
+//  Handles Engine.IO handshake (packet 0 -> 40 -> 40 ack), automatic room joining,
 //  real-time live_frame streaming, and card_detected event emissions.
 //
 
@@ -20,6 +20,9 @@ final class iOSSocketManager: ObservableObject {
     }
     private var pendingSessionId: String?
     private var pingTimer: Timer?
+    private var reconnectTimer: Timer?
+    private var currentToken: String = ""
+    private var isIntentionallyDisconnected = false
     
     private init() {}
     
@@ -28,28 +31,34 @@ final class iOSSocketManager: ObservableObject {
     }
     
     func connect(token: String = "") {
-        disconnect()
-        
-        var wsUrlString = "ws://\(serverIP):3000/socket.io/?EIO=4&transport=websocket"
         if !token.isEmpty {
-            wsUrlString += "&token=\(token)"
+            self.currentToken = token
         }
-        guard let url = URL(string: wsUrlString) else { return }
+        isIntentionallyDisconnected = false
+        reconnectTimer?.invalidate()
+        
+        guard let url = buildWebSocketURL(token: self.currentToken) else { return }
+        
+        // Clean previous task
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
         
         let session = URLSession(configuration: .default)
         webSocketTask = session.webSocketTask(with: url)
         webSocketTask?.resume()
         
-        print("🔌 [iOS Socket] Connecting to server: \(wsUrlString)")
+        print("🔌 [iOS Socket] Connecting to server: \(url.absoluteString)")
         
-        // Send Socket.IO v4 Connect Packet
-        sendRaw("40")
         listenForMessages()
         startPingTimer()
-        
-        DispatchQueue.main.async {
-            self.isConnected = true
+    }
+    
+    private func buildWebSocketURL(token: String) -> URL? {
+        let ip = serverIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        var wsUrlString = "ws://\(ip):3000/socket.io/?EIO=4&transport=websocket"
+        if !token.isEmpty {
+            wsUrlString += "&token=\(token)"
         }
+        return URL(string: wsUrlString)
     }
     
     private func listenForMessages() {
@@ -73,24 +82,27 @@ final class iOSSocketManager: ObservableObject {
                 DispatchQueue.main.async {
                     self.isConnected = false
                 }
+                self.scheduleAutoReconnect()
             }
         }
     }
     
     private func handleIncomingPacket(_ text: String) {
-        if text.startsWith("0") {
-            // Engine.IO Open Packet -> Send Socket.IO Connect
+        if text.hasPrefix("0") {
+            // 1. Engine.IO Open Packet -> Respond with Socket.IO Connect ("40")
+            print("📩 [iOS Socket] Received Engine.IO Open -> Sending Socket.IO Connect")
             sendRaw("40")
-            if let session = pendingSessionId {
-                joinRoom(sessionId: session)
-            }
-        } else if text.startsWith("2") {
-            // Engine.IO Ping -> Send Pong
+        } else if text.hasPrefix("2") {
+            // 2. Engine.IO Ping -> Respond with Pong ("3")
             sendRaw("3")
-        } else if text.startsWith("40") {
-            print("✅ [iOS Socket] Handshake complete!")
-            if let session = pendingSessionId {
-                joinRoom(sessionId: session)
+        } else if text.hasPrefix("40") {
+            // 3. Socket.IO Connect ACK -> Connection is Fully Established!
+            print("✅ [iOS Socket] Socket.IO Handshake Complete & Connected!")
+            DispatchQueue.main.async {
+                self.isConnected = true
+            }
+            if let session = self.pendingSessionId {
+                self.joinRoom(sessionId: session)
             }
         }
     }
@@ -111,6 +123,7 @@ final class iOSSocketManager: ObservableObject {
     }
     
     func sendLiveFrame(sessionId: String, dataUri: String) {
+        guard isConnected else { return }
         let jsonPayload = """
         42["live_frame",{"sessionId":"\(sessionId)","frame":"\(dataUri)"}]
         """
@@ -124,6 +137,15 @@ final class iOSSocketManager: ObservableObject {
         }
     }
     
+    private func scheduleAutoReconnect() {
+        guard !isIntentionallyDisconnected else { return }
+        reconnectTimer?.invalidate()
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+            print("🔄 [iOS Socket] Attempting auto-reconnect...")
+            self?.connect()
+        }
+    }
+    
     private func sendRaw(_ message: String) {
         webSocketTask?.send(.string(message)) { error in
             if let error = error {
@@ -133,18 +155,14 @@ final class iOSSocketManager: ObservableObject {
     }
     
     func disconnect() {
+        isIntentionallyDisconnected = true
         pingTimer?.invalidate()
+        reconnectTimer?.invalidate()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         DispatchQueue.main.async {
             self.isConnected = false
         }
         print("🔴 [iOS Socket] Disconnected")
-    }
-}
-
-private extension String {
-    func startsWith(_ prefix: String) -> Bool {
-        return self.hasPrefix(prefix)
     }
 }
