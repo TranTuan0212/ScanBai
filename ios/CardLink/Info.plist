@@ -29,6 +29,8 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Ứng dụng cần quyền kết nối mạng nội bộ Wi-Fi để kết nối tới máy chủ CardLink Server.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

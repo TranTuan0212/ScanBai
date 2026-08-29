@@ -48,28 +48,14 @@ struct LiveView: View {
                 }
             }
             
-            // 3. AI Card Bounding Box Overlay
+            // 3. Card Bounding Box Overlay (Clean Green Frame without AI tags)
             if let box = cardDetector.detectionBox {
                 GeometryReader { geometry in
                     let rect = aspectFillRect(box, in: geometry.size)
                     
                     Rectangle()
                         .path(in: rect)
-                        .stroke(Color.green, lineWidth: 3.5)
-                        .overlay(
-                            VStack {
-                                Text(" [AI CARD: \(cardDetector.lastDetectedCard ?? "DETECTED")] ")
-                                    .font(.caption2.bold())
-                                    .padding(4)
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(4)
-                                    .offset(y: -25)
-                                Spacer()
-                            }
-                            .frame(width: max(rect.width, 10), height: max(rect.height, 10))
-                            .position(x: rect.midX, y: rect.midY)
-                        )
+                        .stroke(Color.green, lineWidth: 3.0)
                 }
             }
             

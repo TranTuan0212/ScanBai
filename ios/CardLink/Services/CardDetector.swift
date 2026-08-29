@@ -91,7 +91,7 @@ final class CardDetector: ObservableObject {
                     if area >= 0.02 && area <= 0.88 && ratio >= 0.30 && ratio <= 0.95 {
                         if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
                             let whiteScore = self.calculatePureWhiteDeckScore(cropped)
-                            if whiteScore > maxWhiteScore && whiteScore >= 0.15 {
+                            if whiteScore > maxWhiteScore && whiteScore >= 0.25 {
                                 maxWhiteScore = whiteScore
                                 bestCardRect = rect
                             }
@@ -103,7 +103,7 @@ final class CardDetector: ObservableObject {
                     self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxWhiteScore))"
                 }
                 
-                guard let cardRect = bestCardRect ?? rectResults.first else {
+                guard let cardRect = bestCardRect else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
                     }
