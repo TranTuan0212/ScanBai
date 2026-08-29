@@ -3,8 +3,8 @@
 //  CardLink
 //
 //  Ultra High-Speed 240 FPS Motion-Blur Resilient Card & Hand Detector.
-//  Includes Human Skin Tone Rejection (Chống chụp nhầm da tay / cổ tay)
-//  and Perspective Rectification for 100% genuine playing card extraction.
+//  Uses ROI Magnification (Zoom-In 40% Expanded Crop) around detected card & hand
+//  for crystal-clear zoomed-in card pictures on Web Viewers.
 //
 
 import Foundation
@@ -42,7 +42,7 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Cards (Fast Motion & Skin Filtered)
+            // 2. Rectangle Detection Request for Cards
             let rectRequest = VNDetectRectanglesRequest()
             rectRequest.minimumAspectRatio = 0.40
             rectRequest.maximumAspectRatio = 0.95
@@ -111,7 +111,7 @@ final class CardDetector: ObservableObject {
                         let isHandTouchingCard = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
                         
                         if isHandTouchingCard {
-                            if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
+                            if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
                                 
                                 // REJECT SKIN CROPS: Ignore rectangle if it is human finger / wrist skin!
                                 if !self.isHumanSkinTone(cropped) {
@@ -152,14 +152,24 @@ final class CardDetector: ObservableObject {
                     self.detectionBox = targetBox
                 }
                 
-                // Create full original photo of the camera scene
-                if let cgImage = CardDetector.ciContext.createCGImage(portraitCIImage, from: portraitCIImage.extent) {
-                    let fullOriginalImage = UIImage(cgImage: cgImage)
+                // Expand card bounding box by 40% margin around card to crop & zoom in on card + hand!
+                let marginX = cardRect.boundingBox.width * 0.40
+                let marginY = cardRect.boundingBox.height * 0.40
+                
+                let expandedCropBox = CGRect(
+                    x: max(0.0, cardRect.boundingBox.origin.x - marginX),
+                    y: max(0.0, cardRect.boundingBox.origin.y - marginY),
+                    width: min(1.0 - max(0.0, cardRect.boundingBox.origin.x - marginX), cardRect.boundingBox.width + 2 * marginX),
+                    height: min(1.0 - max(0.0, cardRect.boundingBox.origin.y - marginY), cardRect.boundingBox.height + 2 * marginY)
+                )
+                
+                // Crop zoomed region of interest from portrait CIImage
+                if let zoomedCardImage = self.cropRegionOfInterest(portraitCIImage, normalizedBox: expandedCropBox, width: portraitWidth, height: portraitHeight) {
                     let result = CardDetectionResult(
-                        cardName: "LÁ BÀI CÓ KHUNG TAY 240FPS",
+                        cardName: "LÁ BÀI PHÓNG TO 240FPS",
                         confidence: 0.98,
                         boundingBox: targetBox,
-                        cardImage: fullOriginalImage
+                        cardImage: zoomedCardImage
                     )
                     completion(result)
                 } else {
@@ -193,12 +203,13 @@ final class CardDetector: ObservableObject {
         )
     }
     
-    private func cropCardSurface(_ ciImage: CIImage, rect: VNRectangleObservation, width: Int, height: Int) -> UIImage? {
+    /// Crops a normalized region of interest (ROI) from CIImage
+    private func cropRegionOfInterest(_ ciImage: CIImage, normalizedBox: CGRect, width: Int, height: Int) -> UIImage? {
         let cropRect = CGRect(
-            x: rect.boundingBox.origin.x * CGFloat(width),
-            y: rect.boundingBox.origin.y * CGFloat(height),
-            width: rect.boundingBox.width * CGFloat(width),
-            height: rect.boundingBox.height * CGFloat(height)
+            x: normalizedBox.origin.x * CGFloat(width),
+            y: normalizedBox.origin.y * CGFloat(height),
+            width: normalizedBox.width * CGFloat(width),
+            height: normalizedBox.height * CGFloat(height)
         )
         
         let croppedCI = ciImage.cropped(to: cropRect)
@@ -234,8 +245,7 @@ final class CardDetector: ObservableObject {
             let g = Float(rawData[i + 1])
             let b = Float(rawData[i + 2])
             
-            // Standard Human Skin Tone RGB heuristic:
-            // R > 95, G > 40, B > 20, max(R,G,B) - min(R,G,B) > 15, |R - G| > 15, R > G, R > B
+            // Standard Human Skin Tone RGB heuristic
             let maxRGB = max(r, max(g, b))
             let minRGB = min(r, min(g, b))
             if r > 95 && g > 40 && b > 20 && (maxRGB - minRGB) > 15 && abs(r - g) > 15 && r > g && r > b {
@@ -245,7 +255,7 @@ final class CardDetector: ObservableObject {
         }
         
         let skinRatio = totalPixels > 0 ? Float(skinPixels) / Float(totalPixels) : 0.0
-        return skinRatio >= 0.55 // If >= 55% of the crop is human skin, reject!
+        return skinRatio >= 0.55
     }
     
     /// Calculates Pure Playing Card White Paper Score
@@ -288,34 +298,5 @@ final class CardDetector: ObservableObject {
         }
         
         return totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
-    }
-    
-    private func rectifyAndUnrotateCard(_ ciImage: CIImage, rect: VNRectangleObservation, width: Int, height: Int) -> UIImage? {
-        let imageSize = CGSize(width: width, height: height)
-        
-        let topLeft = CGPoint(x: rect.topLeft.x * imageSize.width, y: rect.topLeft.y * imageSize.height)
-        let topRight = CGPoint(x: rect.topRight.x * imageSize.width, y: rect.topRight.y * imageSize.height)
-        let bottomLeft = CGPoint(x: rect.bottomLeft.x * imageSize.width, y: rect.bottomLeft.y * imageSize.height)
-        let bottomRight = CGPoint(x: rect.bottomRight.x * imageSize.width, y: rect.bottomRight.y * imageSize.height)
-        
-        guard let perspectiveFilter = CIFilter(name: "CIPerspectiveCorrection") else { return nil }
-        perspectiveFilter.setValue(ciImage, forKey: kCIInputImageKey)
-        perspectiveFilter.setValue(CIVector(cgPoint: topLeft), forKey: "inputTopLeft")
-        perspectiveFilter.setValue(CIVector(cgPoint: topRight), forKey: "inputTopRight")
-        perspectiveFilter.setValue(CIVector(cgPoint: bottomRight), forKey: "inputBottomRight")
-        perspectiveFilter.setValue(CIVector(cgPoint: bottomLeft), forKey: "inputBottomLeft")
-        
-        guard let correctedImage = perspectiveFilter.outputImage else { return nil }
-        guard let cgImage = CardDetector.ciContext.createCGImage(correctedImage, from: correctedImage.extent) else { return nil }
-        
-        let croppedCard = UIImage(cgImage: cgImage)
-        
-        // REJECT SKIN CROPS: If crop is human finger/wrist skin tone, return nil!
-        if isHumanSkinTone(croppedCard) {
-            print("🛑 [iOS CardDetector] Rejected crop because it is human skin tone (finger/wrist)")
-            return nil
-        }
-        
-        return croppedCard
     }
 }

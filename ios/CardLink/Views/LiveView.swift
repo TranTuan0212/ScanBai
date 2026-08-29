@@ -244,9 +244,9 @@ struct LiveView: View {
                     
                     // 2. Full 240 FPS AI Motion & Card Slicer processing
                     self.cardDetector.processPixelBuffer(pixelBuffer) { result in
-                        if result != nil {
-                            // Send full original photo containing the card & hand!
-                            self.cardSlicer.processFrame(uiImage, whitePaperRatio: 0.50, confidence: 0.98)
+                        if let zoomedCrop = result?.cardImage {
+                            // Pass the zoomed-in ROI photo focusing on card & hand!
+                            self.cardSlicer.processFrame(zoomedCrop, whitePaperRatio: 0.50, confidence: 0.98)
                         } else {
                             self.cardSlicer.processFrameNoCard()
                         }
