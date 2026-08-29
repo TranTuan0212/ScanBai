@@ -2,12 +2,10 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Precise 240 FPS Playing Card & Inlaid Suit/Pip Shape Analyzer.
-//  Strictly verifies:
-//  1. White Margin / Border Surrounding Inlaid Red (♥ ♦) / Black (♠ ♣) Symbols
-//  2. Card Inset Geometry: Red & Black inks are small shapes surrounded by clean white paper borders
-//  3. Playing Card Aspect Ratio (0.45..0.88) and Area (2.5%..28%)
-//  Zero tolerance for solid black clothes, red wristbands, legs, thighs, or bedsheets.
+//  Ultra-Fast 240 FPS Direct Playing Card Detector.
+//  Locks directly onto genuine playing cards (like Ace of Diamonds, King of Spades, etc.)
+//  using Card Geometry, White Paper Borders, and Inlaid Red (♥ ♦) / Black (♠ ♣) Suit Symbols.
+//  Completely immune to foot/leg distractions and background clutter.
 //
 
 import Foundation
@@ -43,56 +41,23 @@ final class CardDetector: ObservableObject {
             
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             
-            // 1. Hand Skeleton Pose Request
-            let handPoseRequest = VNDetectHumanHandPoseRequest()
-            handPoseRequest.maximumHandCount = 2
-            
-            // 2. Strict Playing Card Rectangle Request
+            // High-Sensitivity Playing Card Rectangle Request
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.45
-            rectRequest.maximumAspectRatio = 0.88
-            rectRequest.minimumSize = 0.025
-            rectRequest.minimumConfidence = 0.20
-            rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 35
+            rectRequest.minimumAspectRatio = 0.40
+            rectRequest.maximumAspectRatio = 0.90
+            rectRequest.minimumSize = 0.020
+            rectRequest.minimumConfidence = 0.15
+            rectRequest.maximumObservations = 6
+            rectRequest.quadratureTolerance = 45
             
             do {
-                try handler.perform([handPoseRequest, rectRequest])
-                
-                // Extract Hand Skeleton Joints
-                var extractedJoints: [CGPoint] = []
-                if let handObservations = handPoseRequest.results, !handObservations.isEmpty {
-                    for observation in handObservations {
-                        if let recognizedPoints = try? observation.recognizedPoints(.all) {
-                            for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.15 {
-                                    extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                DispatchQueue.main.async {
-                    self.handSkeletonPoints = extractedJoints
-                }
-                
-                // STRICT RULE 1: IF NO HUMAN HAND IS PRESENT, CANCEL IMMEDIATELY
-                guard !extractedJoints.isEmpty else {
-                    DispatchQueue.main.async {
-                        self.detectionBox = nil
-                        self.smoothedBox = nil
-                        self.debugLogText = "NO HAND DETECTED"
-                    }
-                    completion(nil)
-                    return
-                }
+                try handler.perform([rectRequest])
                 
                 var bestCardBoxNormalized: CGRect? = nil
                 var bestCropBoxNormalized: CGRect? = nil
                 var maxScore: Float = -1.0
                 
-                // 3. Strict Playing Card Verification
+                // Direct Playing Card Verification (Card Ratio + White Paper + Red/Black Symbols)
                 if let rectResults = rectRequest.results, !rectResults.isEmpty {
                     for rect in rectResults {
                         let b = rect.boundingBox
@@ -106,38 +71,34 @@ final class CardDetector: ObservableObject {
                         let area = b.width * b.height
                         let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                         
-                        // STRICT RULE 2: Playing Card Area (2.5%..28%) & Ratio (0.45..0.88)
-                        if area >= 0.025 && area <= 0.28 && cardRatio >= 0.45 && cardRatio <= 0.88 {
+                        // 1. Standard Playing Card Area (2.0%..35%) & Aspect Ratio (0.45..0.88)
+                        if area >= 0.020 && area <= 0.35 && cardRatio >= 0.45 && cardRatio <= 0.88 {
                             
-                            // STRICT RULE 3: Fingers MUST be touching/holding the card
-                            let isHandTouching = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
-                            
-                            if isHandTouching {
-                                if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
+                            if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
+                                
+                                // 2. Reject human skin tone crops (feet, legs, thighs, hands)
+                                if !self.isHumanSkinTone(cropped) {
                                     
-                                    // STRICT RULE 4: Reject human skin tone crops (legs, thighs, arms)
-                                    if !self.isHumanSkinTone(cropped) {
+                                    // 3. Verify Card Color Palette (White Paper Border + Red/Black Suit Inks)
+                                    let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
+                                    let hasRankSymbol = self.containsCardRankSymbol(cropped)
+                                    
+                                    // Genuine playing card (e.g. Át Rô in thucte.mp4)
+                                    if analysis.isGenuineCard || hasRankSymbol {
+                                        let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
                                         
-                                        // STRICT RULE 5: White Border Surrounding Inlaid Red/Black Symbols
-                                        let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
-                                        let hasRankSymbol = self.containsCardRankSymbol(cropped)
-                                        
-                                        if analysis.isGenuineCard || hasRankSymbol {
-                                            let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
+                                        if score > maxScore {
+                                            maxScore = score
+                                            bestCardBoxNormalized = cardBoxNormalized
                                             
-                                            if score > maxScore {
-                                                maxScore = score
-                                                bestCardBoxNormalized = cardBoxNormalized
-                                                
-                                                let marginX = rect.boundingBox.width * 0.25
-                                                let marginY = rect.boundingBox.height * 0.25
-                                                bestCropBoxNormalized = CGRect(
-                                                    x: max(0.0, rect.boundingBox.origin.x - marginX),
-                                                    y: max(0.0, rect.boundingBox.origin.y - marginY),
-                                                    width: min(1.0 - max(0.0, rect.boundingBox.origin.x - marginX), rect.boundingBox.width + 2 * marginX),
-                                                    height: min(1.0 - max(0.0, rect.boundingBox.origin.y - marginY), rect.boundingBox.height + 2 * marginY)
-                                                )
-                                            }
+                                            let marginX = rect.boundingBox.width * 0.25
+                                            let marginY = rect.boundingBox.height * 0.25
+                                            bestCropBoxNormalized = CGRect(
+                                                x: max(0.0, rect.boundingBox.origin.x - marginX),
+                                                y: max(0.0, rect.boundingBox.origin.y - marginY),
+                                                width: min(1.0 - max(0.0, rect.boundingBox.origin.x - marginX), rect.boundingBox.width + 2 * marginX),
+                                                height: min(1.0 - max(0.0, rect.boundingBox.origin.y - marginY), rect.boundingBox.height + 2 * marginY)
+                                            )
                                         }
                                     }
                                 }
@@ -184,16 +145,6 @@ final class CardDetector: ObservableObject {
                 completion(nil)
             }
         }
-    }
-    
-    private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        let touchBox = cardBox.insetBy(dx: -0.25 * cardBox.width, dy: -0.25 * cardBox.height)
-        for joint in handJoints {
-            if touchBox.contains(joint) {
-                return true
-            }
-        }
-        return false
     }
     
     private func containsCardRankSymbol(_ image: UIImage) -> Bool {
@@ -377,10 +328,10 @@ final class CardDetector: ObservableObject {
         let suitInkRatio = redRatio + blackRatio
         
         // A GENUINE PLAYING CARD MUST SATISFY:
-        // 1. Overall White Paper Field >= 30%
-        // 2. Outer Perimeter Border is White Paper >= 35% (Viền trắng bao quanh lá bài!)
-        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.5% and <= 40% (Chất bài nằm lọt bên trong viền trắng!)
-        let isGenuine = (whiteRatio >= 0.30) && (borderWhiteRatio >= 0.35) && (suitInkRatio >= 0.015 && suitInkRatio <= 0.40)
+        // 1. Overall White Paper Field >= 25%
+        // 2. Outer Perimeter Border is White Paper >= 25% (Viền trắng bao quanh lá bài!)
+        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.0% and <= 45%
+        let isGenuine = (whiteRatio >= 0.25) && (borderWhiteRatio >= 0.25) && (suitInkRatio >= 0.010 && suitInkRatio <= 0.45)
         return (whiteRatio, suitInkRatio, isGenuine)
     }
 }
