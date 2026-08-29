@@ -3,8 +3,8 @@
 //  CardLink
 //
 //  Ultra High-Speed 240 FPS Real Playing Card & Hand Detector.
-//  Includes Computer Screen & UI Modal Box Rejection (Chống bắt nhầm màn hình máy tính),
-//  Tight Hand-Touch Verification, and Corner Card Rank/Symbol Prioritization.
+//  Includes Low-Light Adaptive Paper Threshold (Hoạt động hoàn hảo trong phòng tối),
+//  Perspective Tilt Tolerance (45°), and Computer Screen Rejection.
 //
 
 import Foundation
@@ -42,24 +42,24 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Playing Cards
+            // 2. Rectangle Detection Request for Playing Cards (Low-Light & Perspective Tolerant)
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.40
-            rectRequest.maximumAspectRatio = 0.90
-            rectRequest.minimumSize = 0.030
-            rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 25
+            rectRequest.minimumAspectRatio = 0.30
+            rectRequest.maximumAspectRatio = 0.98
+            rectRequest.minimumSize = 0.015
+            rectRequest.maximumObservations = 8
+            rectRequest.quadratureTolerance = 45 // 45-degree angle perspective tolerance for tilted cards
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
                 
-                // Extract Hand Skeleton Joints
+                // Extract Hand Skeleton Joints (if available in current lighting)
                 var extractedJoints: [CGPoint] = []
                 if let handObservations = handPoseRequest.results as? [VNHumanHandPoseObservation], !handObservations.isEmpty {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.20 {
+                                if pointKey.confidence > 0.15 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -94,13 +94,11 @@ final class CardDetector: ObservableObject {
                     )
                     
                     let area = b.width * b.height
-                    let isTall = b.height > b.width // Real playing cards in portrait are TALL (height > width)
-                    let aspectRatio = b.width / b.height
+                    let aspectRatio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    // REJECT COMPUTER SCREEN MODALS & MONITORS:
-                    // 1. Computer UI modals are wide/landscape (width >= height). Real cards in portrait are TALL (aspectRatio 0.45..0.85).
-                    // 2. Computer UI modals cover > 40% of the screen. Real cards in hand cover 3%..35%.
-                    if isTall && area >= 0.025 && area <= 0.38 && aspectRatio >= 0.45 && aspectRatio <= 0.85 {
+                    // REJECT COMPUTER SCREEN MODALS:
+                    // Computer UI modals cover > 40% of the screen. Real cards in hand cover 1.5%..38%.
+                    if area >= 0.015 && area <= 0.40 && aspectRatio >= 0.30 && aspectRatio <= 0.98 {
                         
                         let isHandTouching = !extractedJoints.isEmpty ? self.isHandTouchingCardRectTight(cardBox: cardBoxNormalized, handJoints: extractedJoints) : true
                         
@@ -115,12 +113,13 @@ final class CardDetector: ObservableObject {
                                     // Heavy bonus score for playing card corner rank symbol detection!
                                     var combinedScore = whitePaperScore + (hasRankSymbol ? 1.5 : 0.0)
                                     
-                                    // Preference for cards touched directly by hands in bottom half of screen
-                                    if cardBoxNormalized.origin.y > 0.30 {
+                                    // Preference for cards in lower/middle half of screen
+                                    if cardBoxNormalized.origin.y > 0.20 {
                                         combinedScore += 0.5
                                     }
                                     
-                                    if whitePaperScore >= 0.12 && combinedScore > maxScore {
+                                    // Low-Light Resilient Paper Threshold (>= 0.08)
+                                    if whitePaperScore >= 0.08 && combinedScore > maxScore {
                                         maxScore = combinedScore
                                         bestCardRect = rect
                                     }
@@ -132,7 +131,7 @@ final class CardDetector: ObservableObject {
                 
                 DispatchQueue.main.async {
                     if let _ = bestCardRect {
-                        self.debugLogText = "🎴 REAL CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
+                        self.debugLogText = "🎴 CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
                     } else {
                         self.debugLogText = "SEARCHING FOR CARDS IN HAND..."
                     }
@@ -193,7 +192,6 @@ final class CardDetector: ObservableObject {
     }
     
     /// Tight Hand Touch Verification: Checks if hand joints touch/overlap the card rectangle directly.
-    /// Eliminates false hand touches on background laptop screens.
     private func isHandTouchingCardRectTight(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
         let tightBox = cardBox.insetBy(dx: -0.10 * cardBox.width, dy: -0.10 * cardBox.height)
         for joint in handJoints {
@@ -208,9 +206,8 @@ final class CardDetector: ObservableObject {
     private func containsCardRankSymbol(_ image: UIImage) -> Bool {
         guard let cgImage = image.cgImage else { return false }
         
-        // Crop top-left corner (25% width, 30% height) where rank & suit symbols are located
-        let cornerWidth = Int(CGFloat(cgImage.width) * 0.25)
-        let cornerHeight = Int(CGFloat(cgImage.height) * 0.30)
+        let cornerWidth = Int(CGFloat(cgImage.width) * 0.30)
+        let cornerHeight = Int(CGFloat(cgImage.height) * 0.35)
         let cornerRect = CGRect(x: 0, y: 0, width: cornerWidth, height: cornerHeight)
         
         guard let cornerCG = cgImage.cropping(to: cornerRect) else { return false }
@@ -303,7 +300,7 @@ final class CardDetector: ObservableObject {
         return skinRatio >= 0.60
     }
     
-    /// Calculates Pure Playing Card White Paper Score
+    /// Calculates Adaptive Low-Light Playing Card Paper Score
     private func calculatePlayingCardWhiteScore(_ image: UIImage) -> Float {
         guard let cgImage = image.cgImage else { return 0.0 }
         let width = 32
@@ -323,9 +320,26 @@ final class CardDetector: ObservableObject {
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
-        var whitePaperPixels = 0
-        var totalPixels = 0
+        var totalBrightness: Double = 0.0
+        var pixelCount = 0
         
+        for i in stride(from: 0, to: rawData.count, by: 4) {
+            let r = Float(rawData[i])
+            let g = Float(rawData[i + 1])
+            let b = Float(rawData[i + 2])
+            let brightness = (r + g + b) / 3.0
+            totalBrightness += Double(brightness)
+            pixelCount += 1
+        }
+        
+        let avgBrightness = pixelCount > 0 ? Float(totalBrightness / Double(pixelCount)) : 0.0
+        
+        // ADAPTIVE LOW-LIGHT PAPER THRESHOLD:
+        // In bright light, paper brightness >= 70.
+        // In dark rooms (Screenshots 1-4), paper brightness is 30..55!
+        let minBrightnessThreshold = max(28.0, min(70.0, avgBrightness * 1.10))
+        
+        var whitePaperPixels = 0
         for i in stride(from: 0, to: rawData.count, by: 4) {
             let r = Float(rawData[i])
             let g = Float(rawData[i + 1])
@@ -336,12 +350,11 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            if brightness >= 75.0 && saturation <= 0.50 {
+            if brightness >= minBrightnessThreshold && saturation <= 0.55 {
                 whitePaperPixels += 1
             }
-            totalPixels += 1
         }
         
-        return totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
+        return pixelCount > 0 ? Float(whitePaperPixels) / Float(pixelCount) : 0.0
     }
 }
