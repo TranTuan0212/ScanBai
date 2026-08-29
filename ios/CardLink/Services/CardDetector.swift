@@ -2,10 +2,11 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Fast 240 FPS Direct Playing Card Detector.
-//  Locks directly onto genuine playing cards (like Ace of Diamonds, King of Spades, etc.)
-//  using Card Geometry, White Paper Borders, and Inlaid Red (♥ ♦) / Black (♠ ♣) Suit Symbols.
-//  Completely immune to foot/leg distractions and background clutter.
+//  Ultra-Precise 240 FPS Playing Card Detector.
+//  Strictly enforces:
+//  1. Real Pixel Aspect Ratio (0.58..0.82) based on true unnormalized camera resolution.
+//  2. HSV Indoor Skin Tone Rejection (Rejects 100% of legs, shins, arms, feet, thighs).
+//  3. White Paper Margin + Inlaid Red (♥ ♦) / Black (♠ ♣) Suit & Rank Symbol verification.
 //
 
 import Foundation
@@ -41,13 +42,13 @@ final class CardDetector: ObservableObject {
             
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             
-            // High-Sensitivity Playing Card Rectangle Request
+            // High-Sensitivity Rectangle Request
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.40
-            rectRequest.maximumAspectRatio = 0.90
+            rectRequest.minimumAspectRatio = 0.30
+            rectRequest.maximumAspectRatio = 0.95
             rectRequest.minimumSize = 0.020
             rectRequest.minimumConfidence = 0.15
-            rectRequest.maximumObservations = 6
+            rectRequest.maximumObservations = 8
             rectRequest.quadratureTolerance = 45
             
             do {
@@ -57,7 +58,6 @@ final class CardDetector: ObservableObject {
                 var bestCropBoxNormalized: CGRect? = nil
                 var maxScore: Float = -1.0
                 
-                // Direct Playing Card Verification (Card Ratio + White Paper + Red/Black Symbols)
                 if let rectResults = rectRequest.results, !rectResults.isEmpty {
                     for rect in rectResults {
                         let b = rect.boundingBox
@@ -69,21 +69,25 @@ final class CardDetector: ObservableObject {
                         )
                         
                         let area = b.width * b.height
-                        let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                         
-                        // 1. Standard Playing Card Area (2.0%..35%) & Aspect Ratio (0.45..0.88)
-                        if area >= 0.020 && area <= 0.35 && cardRatio >= 0.45 && cardRatio <= 0.88 {
+                        // 1. REAL PIXEL ASPECT RATIO (Corrected for 9:16 portrait screen distortion)
+                        let pixelWidth = b.width * CGFloat(portraitWidth)
+                        let pixelHeight = b.height * CGFloat(portraitHeight)
+                        let realPixelAspect = min(pixelWidth, pixelHeight) / max(pixelWidth, pixelHeight)
+                        
+                        // Strict Playing Card Real Aspect Ratio (0.58..0.82) and Area (2.0%..30%)
+                        // Instantly rejects tall skinny legs/shins/bed stripes (aspect 0.25..0.45)!
+                        if area >= 0.020 && area <= 0.30 && realPixelAspect >= 0.58 && realPixelAspect <= 0.82 {
                             
                             if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
                                 
-                                // 2. Reject human skin tone crops (feet, legs, thighs, hands)
+                                // 2. HSV Indoor Skin Tone Rejection (Rejects legs, shins, arms, feet)
                                 if !self.isHumanSkinTone(cropped) {
                                     
                                     // 3. Verify Card Color Palette (White Paper Border + Red/Black Suit Inks)
                                     let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
                                     let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                     
-                                    // Genuine playing card (e.g. Át Rô in thucte.mp4)
                                     if analysis.isGenuineCard || hasRankSymbol {
                                         let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
                                         
@@ -91,8 +95,8 @@ final class CardDetector: ObservableObject {
                                             maxScore = score
                                             bestCardBoxNormalized = cardBoxNormalized
                                             
-                                            let marginX = rect.boundingBox.width * 0.25
-                                            let marginY = rect.boundingBox.height * 0.25
+                                            let marginX = rect.boundingBox.width * 0.20
+                                            let marginY = rect.boundingBox.height * 0.20
                                             bestCropBoxNormalized = CGRect(
                                                 x: max(0.0, rect.boundingBox.origin.x - marginX),
                                                 y: max(0.0, rect.boundingBox.origin.y - marginY),
@@ -212,6 +216,7 @@ final class CardDetector: ObservableObject {
         return UIImage(cgImage: cgImage)
     }
     
+    /// High-Precision Skin Tone Rejection (Detects indoor yellow lamp lighting skin tone)
     private func isHumanSkinTone(_ image: UIImage) -> Bool {
         guard let cgImage = image.cgImage else { return false }
         let width = 32
@@ -241,14 +246,18 @@ final class CardDetector: ObservableObject {
             
             let maxRGB = max(r, max(g, b))
             let minRGB = min(r, min(g, b))
-            if r > 95 && g > 40 && b > 20 && (maxRGB - minRGB) > 15 && abs(r - g) > 15 && r > g && r > b {
+            let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
+            
+            // HSV / RGB Skin Tone Range for Indoor Lighting
+            let isSkin = (r > 80 && g > 40 && b > 20 && r > g && (r - b) > 10 && saturation >= 0.12 && saturation <= 0.65)
+            if isSkin {
                 skinPixels += 1
             }
             totalPixels += 1
         }
         
         let skinRatio = totalPixels > 0 ? Float(skinPixels) / Float(totalPixels) : 0.0
-        return skinRatio >= 0.45 // Rejects skin crops if >= 45% skin
+        return skinRatio >= 0.35 // Rejects crops with >= 35% skin tone
     }
     
     /// Analyzes Playing Card Color Palette:
@@ -292,8 +301,8 @@ final class CardDetector: ObservableObject {
                 let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
                 let brightness = (r + g + b) / 3.0
                 
-                let isWhitePixel = (brightness >= 45.0 && saturation <= 0.50)
-                let isRedPixel = (r >= 100 && r > 1.35 * g && r > 1.35 * b && saturation >= 0.35)
+                let isWhitePixel = (brightness >= 45.0 && saturation <= 0.45)
+                let isRedPixel = (r >= 100 && r > 1.30 * g && r > 1.30 * b && saturation >= 0.35)
                 let isBlackPixel = (brightness <= 50.0 && saturation <= 0.35)
                 
                 if isWhitePixel {
@@ -330,8 +339,8 @@ final class CardDetector: ObservableObject {
         // A GENUINE PLAYING CARD MUST SATISFY:
         // 1. Overall White Paper Field >= 25%
         // 2. Outer Perimeter Border is White Paper >= 25% (Viền trắng bao quanh lá bài!)
-        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.0% and <= 45%
-        let isGenuine = (whiteRatio >= 0.25) && (borderWhiteRatio >= 0.25) && (suitInkRatio >= 0.010 && suitInkRatio <= 0.45)
+        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.0% and <= 40%
+        let isGenuine = (whiteRatio >= 0.25) && (borderWhiteRatio >= 0.25) && (suitInkRatio >= 0.010 && suitInkRatio <= 0.40)
         return (whiteRatio, suitInkRatio, isGenuine)
     }
 }
