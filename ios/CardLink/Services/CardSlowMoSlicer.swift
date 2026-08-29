@@ -2,11 +2,9 @@
 //  CardSlowMoSlicer.swift
 //  CardLink
 //
-//  240 FPS High-Speed Ring Buffer & Sharpness-Based Slicer for iOS.
-//  1. Accumulates 240 FPS high-speed motion frames.
-//  2. Computes Laplacian Variance (Edge Sharpness) to select the #1 crispest frame.
-//  3. Implements 3-Frame Flicker Filter & State Machine (NoCard <-> CardActive).
-//  4. Manages Round-Robin N tụ x 3 cards auto-cycle counters.
+//  240 FPS High-Speed Motion Buffer & Sharpness-Based Slicer for iOS.
+//  Uses strict multi-frame debounce (8-frame presence, 10-frame departure, 800ms cooldown)
+//  to prevent false-positive trigger loops when holding cards in hand!
 //
 
 import Foundation
@@ -24,7 +22,9 @@ final class CardSlowMoSlicer: ObservableObject {
     // State Machine
     private var isCardActive: Bool = false
     private var consecutiveFrameCount: Int = 0
+    private var absentFrameCount: Int = 0
     private var lastSeenTime: Date = Date()
+    private var lastEmitTime: Date = Date.distantPast
     private var activeFrames: [UIImage] = []
     
     var onCardExtracted: ((Int, Int, Int, Bool, String) -> Void)?
@@ -34,6 +34,18 @@ final class CardSlowMoSlicer: ObservableObject {
         self.onCardExtracted = onCardExtracted
     }
     
+    /// Reset counter & state machine
+    func reset() {
+        currentRoundIndex = 1
+        currentCardIndex = 1
+        totalDealtCards = 0
+        isCardActive = false
+        consecutiveFrameCount = 0
+        absentFrameCount = 0
+        activeFrames.removeAll()
+        lastEmitTime = Date.distantPast
+    }
+    
     /// Processes incoming 240 FPS frame with white card ratio and confidence
     func processFrame(_ image: UIImage, whitePaperRatio: Float, confidence: Float = 0.80) {
         let now = Date()
@@ -41,6 +53,7 @@ final class CardSlowMoSlicer: ObservableObject {
         
         if isValidCardPresence {
             consecutiveFrameCount += 1
+            absentFrameCount = 0
             lastSeenTime = now
             activeFrames.append(image)
             
@@ -49,24 +62,35 @@ final class CardSlowMoSlicer: ObservableObject {
                 activeFrames.removeFirst()
             }
             
-            // 3-Frame Flicker Confirmation Gate
-            if consecutiveFrameCount >= 3 {
+            // Requires 8 consecutive frames (~33ms) to confirm active card presence
+            if consecutiveFrameCount >= 8 {
                 isCardActive = true
             }
         } else {
-            // Check if card left frame and state was active
+            consecutiveFrameCount = 0
             if isCardActive {
-                isCardActive = false
-                consecutiveFrameCount = 0
-                if !activeFrames.isEmpty {
-                    let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
-                    extractAndEmitCard(sharpestImage)
-                    activeFrames.removeAll()
+                absentFrameCount += 1
+                
+                // Requires 10 consecutive absent frames (~40ms departure) to finalize card deal
+                if absentFrameCount >= 10 {
+                    isCardActive = false
+                    absentFrameCount = 0
+                    
+                    // Cooldown check: At least 0.8 seconds (800ms) between deal emissions
+                    if now.timeIntervalSince(lastEmitTime) >= 0.8 {
+                        lastEmitTime = now
+                        if !activeFrames.isEmpty {
+                            let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
+                            extractAndEmitCard(sharpestImage)
+                            activeFrames.removeAll()
+                        }
+                    } else {
+                        activeFrames.removeAll()
+                    }
                 }
             } else {
-                // Reset state machine if card absent for more than 1.5 seconds
+                absentFrameCount = 0
                 if now.timeIntervalSince(lastSeenTime) > 1.5 {
-                    consecutiveFrameCount = 0
                     activeFrames.removeAll()
                 }
             }
@@ -119,62 +143,51 @@ final class CardSlowMoSlicer: ObservableObject {
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
-        // 3x3 Laplacian Filter Kernel: [0, 1, 0; 1, -4, 1; 0, 1, 0]
-        var laplacianValues: [Float] = []
+        var laplacianSum: Double = 0.0
+        var pixelCount = 0
+        
         for y in 1..<(height - 1) {
             for x in 1..<(width - 1) {
-                let center = Float(rawData[y * width + x])
-                let top = Float(rawData[(y - 1) * width + x])
-                let bottom = Float(rawData[(y + 1) * width + x])
-                let left = Float(rawData[y * width + (x - 1)])
-                let right = Float(rawData[y * width + (x + 1)])
+                let center = Double(rawData[y * width + x])
+                let up     = Double(rawData[(y - 1) * width + x])
+                let down   = Double(rawData[(y + 1) * width + x])
+                let left   = Double(rawData[y * width + (x - 1)])
+                let right  = Double(rawData[y * width + (x + 1)])
                 
-                let lap = top + bottom + left + right - (4.0 * center)
-                laplacianValues.append(lap)
+                let lap = abs(4 * center - up - down - left - right)
+                laplacianSum += lap
+                pixelCount += 1
             }
         }
         
-        // Calculate Variance of Laplacian
-        guard !laplacianValues.isEmpty else { return 0.0 }
-        let mean = laplacianValues.reduce(0, +) / Float(laplacianValues.count)
-        let variance = laplacianValues.reduce(0) { $0 + pow($1 - mean, 2) } / Float(laplacianValues.count)
-        return variance
+        return pixelCount > 0 ? Float(laplacianSum / Double(pixelCount)) : 0.0
     }
     
-    private func extractAndEmitCard(_ image: UIImage) {
+    private func extractAndEmitCard(_ sharpestImage: UIImage) {
+        let maxRounds = totalRounds > 0 ? totalRounds : 3
+        let currentRound = currentRoundIndex
+        let currentCard = currentCardIndex
+        
         totalDealtCards += 1
-        
         let slotNumber = totalDealtCards
-        let roundIdx = currentRoundIndex
-        let cardIdx = currentCardIndex
-        let isRoundComplete = (cardIdx == 3)
+        let isRoundComplete = (currentRound == maxRounds && currentCard == 3)
         
-        // Convert to JPEG Base64
-        guard let jpegData = image.jpegData(compressionQuality: 0.65) else { return }
-        let base64String = "data:image/jpeg;base64,\(jpegData.base64EncodedString())"
-        
-        print("🎬 [iOS Slicer] Extracted Slot #\(slotNumber) (Tụ \(roundIdx) - Lá \(cardIdx))")
-        onCardExtracted?(slotNumber, roundIdx, cardIdx, isRoundComplete, base64String)
-        
-        // Advance Round-Robin Counters
-        if cardIdx >= 3 {
-            currentCardIndex = 1
-            if roundIdx >= totalRounds {
-                currentRoundIndex = 1 // Auto-cycle rounds
-            } else {
-                currentRoundIndex += 1
-            }
-        } else {
+        // Auto-advance round-robin state counter
+        if currentCard < 3 {
             currentCardIndex += 1
+        } else {
+            currentCardIndex = 1
+            if currentRoundIndex < maxRounds {
+                currentRoundIndex += 1
+            } else {
+                currentRoundIndex = 1
+            }
         }
-    }
-    
-    func reset() {
-        currentRoundIndex = 1
-        currentCardIndex = 1
-        totalDealtCards = 0
-        isCardActive = false
-        consecutiveFrameCount = 0
-        activeFrames.removeAll()
+        
+        guard let jpegData = sharpestImage.jpegData(compressionQuality: 0.50) else { return }
+        let imageBase64 = jpegData.base64EncodedString()
+        
+        onCardExtracted?(slotNumber, currentRound, currentCard, isRoundComplete, imageBase64)
+        print("🃟 [iOS 240FPS Slicer] Emitted dealt card #\(slotNumber) (Round \(currentRound)/\(maxRounds), Card \(currentCard)/3)")
     }
 }
