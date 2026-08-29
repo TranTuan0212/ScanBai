@@ -2,9 +2,9 @@
 //  CardSlowMoSlicer.swift
 //  CardLink
 //
-//  240 FPS High-Speed Motion Buffer & Sharpness-Based Slicer for iOS.
-//  Uses strict multi-frame debounce (8-frame presence, 10-frame departure, 800ms cooldown)
-//  to prevent false-positive trigger loops when holding cards in hand!
+//  Real-Life Dealing State Machine & 240 FPS Motion Slicer.
+//  Tracks Hand/Player index (Tụ 1..N), Card index (Lá 1..3), Game Round (Ván #1, #2...),
+//  and detects exact deal motion flick + static settlement to extract the #1 sharpest frame!
 //
 
 import Foundation
@@ -13,11 +13,15 @@ import CoreGraphics
 
 final class CardSlowMoSlicer: ObservableObject {
     
-    @Published var currentRoundIndex: Int = 1
-    @Published var currentCardIndex: Int = 1
-    @Published var totalRounds: Int = 3
-    @Published var totalDealtCards: Int = 0
+    @Published var gameRoundNumber: Int = 1       // Ván bài #1, #2...
+    @Published var currentHandIndex: Int = 1       // Tụ #1..N
+    @Published var currentCardIndex: Int = 1       // Lá #1..3
+    @Published var totalHands: Int = 3             // Tổng số tụ (Ví dụ: 3 Tụ)
+    @Published var totalDealtCardsInRound: Int = 0  // Số lá đã chia trong ván hiện tại (0..9)
+    @Published var totalDealtCardsGlobal: Int = 0   // Tổng số lá chia tất cả ván
     @Published var lastExtractedSharpness: Float = 0.0
+    @Published var isRoundJustCompleted: Bool = false
+    @Published var statusBannerText: String = "🎴 ĐANG CHIA: TỤ 1 - LÁ 1 (VÁN #1)"
     
     // State Machine
     private var isCardActive: Bool = false
@@ -27,23 +31,38 @@ final class CardSlowMoSlicer: ObservableObject {
     private var lastEmitTime: Date = Date.distantPast
     private var activeFrames: [UIImage] = []
     
-    var onCardExtracted: ((Int, Int, Int, Bool, String) -> Void)?
+    var onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)?
     
-    init(totalRounds: Int = 3, onCardExtracted: ((Int, Int, Int, Bool, String) -> Void)? = nil) {
-        self.totalRounds = totalRounds
+    init(totalHands: Int = 3, onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)? = nil) {
+        self.totalHands = totalHands
         self.onCardExtracted = onCardExtracted
+        updateStatusBanner()
     }
     
-    /// Reset counter & state machine
+    /// Reset counter & state machine for new game
     func reset() {
-        currentRoundIndex = 1
+        gameRoundNumber = 1
+        currentHandIndex = 1
         currentCardIndex = 1
-        totalDealtCards = 0
+        totalDealtCardsInRound = 0
+        totalDealtCardsGlobal = 0
         isCardActive = false
+        isRoundJustCompleted = false
         consecutiveFrameCount = 0
         absentFrameCount = 0
         activeFrames.removeAll()
         lastEmitTime = Date.distantPast
+        updateStatusBanner()
+    }
+    
+    /// Updates status banner description
+    private func updateStatusBanner() {
+        let maxCardsInRound = totalHands * 3
+        if isRoundJustCompleted {
+            statusBannerText = "🏆 KẾT THÚC VÁN #\(gameRoundNumber) (\(maxCardsInRound)/\(maxCardsInRound) LÁ) -> CHUẨN BỊ VÁN MỚI"
+        } else {
+            statusBannerText = "🎴 VÁN #\(gameRoundNumber) | TỤ #\(currentHandIndex)/\(totalHands) - LÁ #\(currentCardIndex)/3 (LÁ BÀI SỐ \(totalDealtCardsInRound + 1)/\(maxCardsInRound))"
+        }
     }
     
     /// Processes incoming 240 FPS frame with white card ratio and confidence
@@ -57,12 +76,11 @@ final class CardSlowMoSlicer: ObservableObject {
             lastSeenTime = now
             activeFrames.append(image)
             
-            // Limit ring buffer to maximum 30 frames (at 240 FPS, 30 frames = 125ms motion slice)
             if activeFrames.count > 30 {
                 activeFrames.removeFirst()
             }
             
-            // Requires 3 consecutive frames (~12ms) to confirm active card presence
+            // Requires 3 consecutive frames (~12ms) to confirm deal motion
             if consecutiveFrameCount >= 3 {
                 isCardActive = true
             }
@@ -119,7 +137,6 @@ final class CardSlowMoSlicer: ObservableObject {
         DispatchQueue.main.async {
             self.lastExtractedSharpness = maxSharpness
         }
-        print("🔍 [iOS 240FPS Slicer] Selected sharpest frame out of \(frames.count) frames (Sharpness Score: \(String(format: "%.1f", maxSharpness)))")
         return bestFrame
     }
     
@@ -164,30 +181,46 @@ final class CardSlowMoSlicer: ObservableObject {
     }
     
     private func extractAndEmitCard(_ sharpestImage: UIImage) {
-        let maxRounds = totalRounds > 0 ? totalRounds : 3
-        let currentRound = currentRoundIndex
+        let maxHands = totalHands > 0 ? totalHands : 3
+        let currentHand = currentHandIndex
         let currentCard = currentCardIndex
+        let currentVan = gameRoundNumber
         
-        totalDealtCards += 1
-        let slotNumber = totalDealtCards
-        let isRoundComplete = (currentRound == maxRounds && currentCard == 3)
+        totalDealtCardsGlobal += 1
+        totalDealtCardsInRound += 1
         
-        // Auto-advance round-robin state counter
-        if currentCard < 3 {
-            currentCardIndex += 1
+        let maxCardsInRound = maxHands * 3
+        let isRoundComplete = (totalDealtCardsInRound >= maxCardsInRound)
+        
+        // Auto-advance hand & card dealing turn:
+        // Round-Robin dealing: Tụ 1 -> Tụ 2 -> Tụ 3 for Card 1, then Tụ 1 -> Tụ 2 -> Tụ 3 for Card 2, etc.
+        if currentHand < maxHands {
+            currentHandIndex += 1
         } else {
-            currentCardIndex = 1
-            if currentRoundIndex < maxRounds {
-                currentRoundIndex += 1
+            currentHandIndex = 1
+            if currentCardIndex < 3 {
+                currentCardIndex += 1
             } else {
-                currentRoundIndex = 1
+                // Round Complete! Reset for next game round
+                currentCardIndex = 1
+                isRoundJustCompleted = true
+                gameRoundNumber += 1
+                totalDealtCardsInRound = 0
             }
+        }
+        
+        if !isRoundComplete {
+            isRoundJustCompleted = false
+        }
+        
+        DispatchQueue.main.async {
+            self.updateStatusBanner()
         }
         
         guard let jpegData = sharpestImage.jpegData(compressionQuality: 0.50) else { return }
         let imageBase64 = jpegData.base64EncodedString()
         
-        onCardExtracted?(slotNumber, currentRound, currentCard, isRoundComplete, imageBase64)
-        print("🃟 [iOS 240FPS Slicer] Emitted dealt card #\(slotNumber) (Round \(currentRound)/\(maxRounds), Card \(currentCard)/3)")
+        onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
+        print("🃟 [iOS 240FPS Slicer] Emitted dealt card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }

@@ -89,24 +89,17 @@ struct LiveView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
                 
-                // Round-Robin Deal Counter Banner
+                // Dynamic Deal Progress Banner
                 if isLiveActive {
-                    HStack(spacing: 12) {
-                        Text("ROUND #\(cardSlicer.currentRoundIndex)/\(cardSlicer.totalRounds)")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.cyan)
-                        
-                        Text("CARD #\(cardSlicer.currentCardIndex)/3")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.orange)
-                        
-                        Text("TOTAL: \(cardSlicer.totalDealtCards)")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.green)
+                    HStack(spacing: 8) {
+                        Text(cardSlicer.statusBannerText)
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(cardSlicer.isRoundJustCompleted ? .yellow : .cyan)
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(Color.black.opacity(0.80)))
+                    .overlay(Capsule().stroke(cardSlicer.isRoundJustCompleted ? Color.yellow : Color.cyan, lineWidth: 1))
                     .padding(.top, 4)
                 }
                 
@@ -277,9 +270,9 @@ struct LiveView: View {
     }
     
     private func setupSlicerCallbacks() {
-        cardSlicer.onCardExtracted = { slotNumber, roundIdx, cardIdx, isRoundComplete, imageBase64 in
+        cardSlicer.onCardExtracted = { totalSlot, vanIdx, handIdx, cardIdx, isRoundComplete, imageBase64 in
             if isLiveActive {
-                let cardLabel = "LÁ #\(slotNumber) (TỤ \(roundIdx) - LÁ \(cardIdx))"
+                let cardLabel = "VÁN #\(vanIdx) | TỤ #\(handIdx) - LÁ #\(cardIdx)"
                 socketManager.sendCardDetected(
                     sessionId: sessionId,
                     label: cardLabel,
