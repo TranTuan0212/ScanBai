@@ -3,8 +3,9 @@
 //  CardLink
 //
 //  Real-Life Dealing State Machine & 240 FPS Motion Slicer.
-//  Tracks Hand/Player index (Tụ 1..N), Card index (Lá 1..3), Game Round (Ván #1, #2...),
-//  and detects exact deal motion flick + static settlement to extract the #1 sharpest frame!
+//  Includes Strict Slot Deduplication (Chống gửi trùng lá bài):
+//  Mỗi lá bài khi xìa ra CHỈ ĐƯỢC GỬI ĐÚNG 1 LẦN DUY NHẤT lên Server.
+//  Chỉ khi lá bài đó rời khỏi khung hình hoàn toàn mới mở cổng cho lá bài tiếp theo.
 //
 
 import Foundation
@@ -23,8 +24,10 @@ final class CardSlowMoSlicer: ObservableObject {
     @Published var isRoundJustCompleted: Bool = false
     @Published var statusBannerText: String = "🎴 ĐANG CHIA: TỤ 1 - LÁ 1 (VÁN #1)"
     
-    // State Machine
+    // State Machine & Strict Deduplication Gate
     private var isCardActive: Bool = false
+    private var hasSentCurrentCardSlot: Bool = false  // Cờ chặn chống gửi trùng bài
+    private var lastEmittedSlotIndex: Int = -1
     private var consecutiveFrameCount: Int = 0
     private var absentFrameCount: Int = 0
     private var lastSeenTime: Date = Date()
@@ -51,6 +54,8 @@ final class CardSlowMoSlicer: ObservableObject {
         totalDealtCardsInRound = 0
         totalDealtCardsGlobal = 0
         isCardActive = false
+        hasSentCurrentCardSlot = false
+        lastEmittedSlotIndex = -1
         isRoundJustCompleted = false
         consecutiveFrameCount = 0
         absentFrameCount = 0
@@ -65,7 +70,7 @@ final class CardSlowMoSlicer: ObservableObject {
         if isRoundJustCompleted {
             statusBannerText = "🏆 KẾT THÚC VÁN #\(gameRoundNumber) (\(maxCardsInRound)/\(maxCardsInRound) LÁ) -> CHUẨN BỊ VÁN MỚI"
         } else {
-            statusBannerText = "🎴 VÁN #\(gameRoundNumber) | TỤ #\(currentHandIndex)/\(totalHands) - LÁ #\(currentCardIndex)/3 (LÁ BÀI SỐ \(totalDealtCardsInRound + 1)/\(maxCardsInRound))"
+            statusBannerText = "🎴 VÁN #\(gameRoundNumber) | TỤ #\(currentHandIndex)/\(totalHands) - LÁ #\(currentCardIndex)/3 (LÁ SỐ \(totalDealtCardsInRound + 1)/\(maxCardsInRound))"
         }
     }
     
@@ -87,32 +92,31 @@ final class CardSlowMoSlicer: ObservableObject {
             // Requires 3 consecutive frames (~12ms) to confirm deal motion
             if consecutiveFrameCount >= 3 {
                 isCardActive = true
+                
+                // STRICT DEDUPLICATION: If card is currently active and hasn't been emitted yet for this slot, emit now!
+                if !hasSentCurrentCardSlot && now.timeIntervalSince(lastEmitTime) >= 0.5 {
+                    if !activeFrames.isEmpty {
+                        let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
+                        extractAndEmitCard(sharpestImage)
+                    }
+                }
             }
         } else {
             consecutiveFrameCount = 0
             if isCardActive {
                 absentFrameCount += 1
                 
-                // Requires 4 consecutive absent frames (~16ms departure) to finalize card deal
-                if absentFrameCount >= 4 {
+                // Requires 6 consecutive absent frames (~25ms departure) to confirm card left frame completely
+                if absentFrameCount >= 6 {
                     isCardActive = false
+                    hasSentCurrentCardSlot = false // RE-ARM GATE FOR NEXT DEALT CARD!
                     absentFrameCount = 0
-                    
-                    // Cooldown check: At least 0.4 seconds (400ms) between deal emissions
-                    if now.timeIntervalSince(lastEmitTime) >= 0.4 {
-                        lastEmitTime = now
-                        if !activeFrames.isEmpty {
-                            let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
-                            extractAndEmitCard(sharpestImage)
-                            activeFrames.removeAll()
-                        }
-                    } else {
-                        activeFrames.removeAll()
-                    }
+                    activeFrames.removeAll()
                 }
             } else {
                 absentFrameCount = 0
-                if now.timeIntervalSince(lastSeenTime) > 1.5 {
+                hasSentCurrentCardSlot = false // RE-ARM GATE IF NO CARD SEEN FOR > 0.5s
+                if now.timeIntervalSince(lastSeenTime) > 0.5 {
                     activeFrames.removeAll()
                 }
             }
@@ -185,6 +189,9 @@ final class CardSlowMoSlicer: ObservableObject {
     }
     
     private func extractAndEmitCard(_ sharpestImage: UIImage) {
+        // ABSOLUTE DEDUPLICATION CHECK: If this slot has ALREADY been emitted, RETURN IMMEDIATELY!
+        guard !hasSentCurrentCardSlot else { return }
+        
         let maxHands = totalHands > 0 ? totalHands : 3
         let currentHand = currentHandIndex
         let currentCard = currentCardIndex
@@ -192,6 +199,11 @@ final class CardSlowMoSlicer: ObservableObject {
         
         totalDealtCardsGlobal += 1
         totalDealtCardsInRound += 1
+        
+        // Mark current slot as SENT! DO NOT SEND AGAIN UNTIL CARD LEAVES FRAME!
+        hasSentCurrentCardSlot = true
+        lastEmittedSlotIndex = totalDealtCardsGlobal
+        lastEmitTime = Date()
         
         let maxCardsInRound = maxHands * 3
         let isRoundComplete = (totalDealtCardsInRound >= maxCardsInRound)
@@ -225,6 +237,6 @@ final class CardSlowMoSlicer: ObservableObject {
         let imageBase64 = jpegData.base64EncodedString()
         
         onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
-        print("🃟 [iOS 240FPS Slicer] Emitted dealt card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
+        print("🃟 [iOS 240FPS Slicer] Emitted UNIQUE dealt card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }
