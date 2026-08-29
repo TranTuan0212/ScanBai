@@ -115,16 +115,18 @@ final class CardSlowMoSlicer: ObservableObject {
         if isCardActive {
             absentFrameCount += 1
             
-            // Require only 4 absent frames (~16ms departure) to immediately re-arm for the next dealt card!
-            if absentFrameCount >= 4 {
+            // Temporal & Spatial Tracker Tolerance:
+            // Require 15 absent frames (~60ms at 240fps) AND at least 0.28s time gap before re-arming for the next card slot!
+            // Prevents track breakage / duplicate card IDs when fingers temporarily occlude the card for a few frames.
+            if absentFrameCount >= 15 && now.timeIntervalSince(lastSeenTime) >= 0.28 {
                 isCardActive = false
-                hasSentCurrentCardSlot = false // Re-arm for next card!
+                hasSentCurrentCardSlot = false // Re-arm for the genuine next card!
                 absentFrameCount = 0
                 activeFrames.removeAll()
             }
         } else {
             absentFrameCount = 0
-            if now.timeIntervalSince(lastSeenTime) > 0.3 {
+            if now.timeIntervalSince(lastSeenTime) > 0.35 {
                 hasSentCurrentCardSlot = false
                 activeFrames.removeAll()
             }
