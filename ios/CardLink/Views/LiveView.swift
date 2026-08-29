@@ -214,6 +214,34 @@ struct LiveView: View {
                         }
                     }
                     
+                    // Hardware Lens & Zoom Selector ([ 0.5x | 1x | 2x ])
+                    if cameraManager.availableZoomFactors.count > 1 {
+                        HStack(spacing: 8) {
+                            ForEach(cameraManager.availableZoomFactors, id: \.self) { factor in
+                                Button(action: {
+                                    cameraManager.setZoomFactor(factor)
+                                }) {
+                                    Text(factor == 0.5 ? "0.5x" : (factor == 1.0 ? "1x" : "\(Int(factor))x"))
+                                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                                        .foregroundColor(cameraManager.currentZoomFactor == factor ? .black : .white)
+                                        .frame(width: 44, height: 32)
+                                        .background(
+                                            Circle()
+                                                .fill(cameraManager.currentZoomFactor == factor ? Color.yellow : Color.black.opacity(0.65))
+                                        )
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                        )
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.black.opacity(0.40)))
+                        .padding(.bottom, 4)
+                    }
+                    
                     HStack(spacing: 20) {
                         // Enhanced Flash / Torch Toggle Button ("ĐÈN FLASH")
                         Button(action: {

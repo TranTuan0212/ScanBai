@@ -3,7 +3,8 @@
 //  CardLink
 //
 //  AVCaptureSession manager configured for highest supported FPS (60/120/240 FPS) and 1080p Full HD resolution.
-//  Includes Real-Time Dynamic Device Orientation Rotation (Portrait, Landscape Left, Landscape Right).
+//  Includes Multi-Lens Zoom Switching (0.5x Ultra-Wide, 1x Wide, 2x Telephoto) and
+//  Real-Time Dynamic Device Orientation Rotation (Portrait, Landscape Left, Landscape Right).
 //
 
 import Foundation
@@ -18,6 +19,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var activeResolution: String = "1080p"
     @Published var currentVideoOrientation: AVCaptureVideoOrientation = .portrait
     @Published var cgImageOrientation: CGImagePropertyOrientation = .right
+    @Published var availableZoomFactors: [CGFloat] = [1.0]
+    @Published var currentZoomFactor: CGFloat = 1.0
     
     let captureSession = AVCaptureSession()
     private var videoDevice: AVCaptureDevice?
@@ -119,7 +122,6 @@ final class CameraManager: NSObject, ObservableObject {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
         
-        // Set to 1080p Full HD Slow-Mo mode for 120/240 FPS High Frame Rate
         if captureSession.canSetSessionPreset(.hd1920x1080) {
             captureSession.sessionPreset = .hd1920x1080
             DispatchQueue.main.async { self.activeResolution = "1080p Slow-Mo (240 FPS)" }
@@ -127,12 +129,22 @@ final class CameraManager: NSObject, ObservableObject {
             captureSession.sessionPreset = .high
         }
         
-        // Find Back Wide-Angle Camera
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        // Discover highest capability camera (Triple, Dual-Wide, or Standard Wide)
+        let deviceTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera,
+            .builtInDualWideCamera,
+            .builtInWideAngleCamera
+        ]
+        
+        let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: deviceTypes, mediaType: .video, position: .back)
+        guard let device = discovery.devices.first ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
             print("❌ [iOS Camera] Back camera not found")
             return
         }
         self.videoDevice = device
+        
+        // Discover supported hardware zoom factors (0.5x Ultra-Wide, 1.0x Wide, 2.0x Telephoto)
+        discoverZoomFactors(for: device)
         
         do {
             let input = try AVCaptureDeviceInput(device: device)
@@ -156,8 +168,91 @@ final class CameraManager: NSObject, ObservableObject {
             captureSession.addOutput(videoDataOutput)
         }
         
-        // AUTO HARDWARE ACCELERATION & HIGHEST FPS DISCOVERY (60/120/240 FPS)
         configureHighestFPSAndStabilization(for: device)
+    }
+    
+    private func discoverZoomFactors(for device: AVCaptureDevice) {
+        var factors: [CGFloat] = []
+        
+        // Check if device is a virtual multi-camera with 0.5x ultra-wide
+        if device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera {
+            factors.append(0.5)
+            factors.append(1.0)
+            if device.maxAvailableVideoZoomFactor >= 2.0 {
+                factors.append(2.0)
+            }
+        } else {
+            // Check if separate ultra-wide lens exists on device
+            let ultraWideDiscovery = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInUltraWideCamera], mediaType: .video, position: .back)
+            if !ultraWideDiscovery.devices.isEmpty {
+                factors.append(0.5)
+            }
+            factors.append(1.0)
+            if device.maxAvailableVideoZoomFactor >= 2.0 {
+                factors.append(2.0)
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.availableZoomFactors = factors
+            self.currentZoomFactor = factors.contains(1.0) ? 1.0 : (factors.first ?? 1.0)
+        }
+    }
+    
+    /// Switch camera zoom factor (0.5x Ultra-Wide, 1.0x Wide, 2.0x Telephoto) in real time
+    func setZoomFactor(_ factor: CGFloat) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let device = self.videoDevice else { return }
+            
+            // 1. If device is virtual multi-camera (Triple / DualWide), adjust videoZoomFactor
+            if device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera {
+                do {
+                    try device.lockForConfiguration()
+                    let targetZoom: CGFloat
+                    if factor == 0.5 {
+                        targetZoom = 1.0 // In virtual camera with ultra-wide base, 1.0 is 0.5x
+                    } else if factor == 1.0 {
+                        targetZoom = 2.0 // 1x wide
+                    } else {
+                        targetZoom = 4.0 // 2x telephoto
+                    }
+                    let clamped = max(device.minAvailableVideoZoomFactor, min(device.maxAvailableVideoZoomFactor, targetZoom))
+                    device.videoZoomFactor = clamped
+                    device.unlockForConfiguration()
+                    DispatchQueue.main.async { self.currentZoomFactor = factor }
+                } catch {
+                    print("❌ [iOS Camera] Zoom configuration failed: \(error)")
+                }
+            } else {
+                // 2. If switching between physical ultra-wide and wide camera inputs
+                let targetType: AVCaptureDevice.DeviceType = (factor == 0.5) ? .builtInUltraWideCamera : .builtInWideAngleCamera
+                let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: [targetType], mediaType: .video, position: .back)
+                
+                if let newDevice = discovery.devices.first, newDevice.uniqueID != device.uniqueID {
+                    self.captureSession.beginConfiguration()
+                    if let currentInput = self.videoDeviceInput {
+                        self.captureSession.removeInput(currentInput)
+                    }
+                    if let newInput = try? AVCaptureDeviceInput(device: newDevice), self.captureSession.canAddInput(newInput) {
+                        self.captureSession.addInput(newInput)
+                        self.videoDeviceInput = newInput
+                        self.videoDevice = newDevice
+                        self.configureHighestFPSAndStabilization(for: newDevice)
+                        DispatchQueue.main.async { self.currentZoomFactor = factor }
+                    }
+                    self.captureSession.commitConfiguration()
+                } else {
+                    // Standard digital zoom on single camera
+                    do {
+                        try device.lockForConfiguration()
+                        let clamped = max(device.minAvailableVideoZoomFactor, min(device.maxAvailableVideoZoomFactor, factor))
+                        device.videoZoomFactor = clamped
+                        device.unlockForConfiguration()
+                        DispatchQueue.main.async { self.currentZoomFactor = factor }
+                    } catch {}
+                }
+            }
+        }
     }
     
     private func configureHighestFPSAndStabilization(for device: AVCaptureDevice) {
@@ -231,6 +326,7 @@ final class CameraManager: NSObject, ObservableObject {
                 self.videoDeviceInput = newInput
                 self.videoDevice = newDevice
                 self.configureHighestFPSAndStabilization(for: newDevice)
+                self.discoverZoomFactors(for: newDevice)
             } else {
                 self.captureSession.addInput(currentInput)
             }
