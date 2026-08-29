@@ -25,7 +25,7 @@ struct StartSessionResponse: Codable {
 
 final class APIService {
     static let shared = APIService()
-    private var serverIP: String {
+    var serverIP: String {
         return DeviceUtils.getServerIP()
     }
     private var baseURL: String {

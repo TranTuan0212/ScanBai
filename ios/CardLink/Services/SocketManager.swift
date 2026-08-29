@@ -15,7 +15,7 @@ final class iOSSocketManager: ObservableObject {
     
     @Published var isConnected = false
     private var webSocketTask: URLSessionWebSocketTask?
-    private var serverIP: String {
+    var serverIP: String {
         return DeviceUtils.getServerIP()
     }
     private var pendingSessionId: String?
