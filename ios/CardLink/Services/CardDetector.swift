@@ -4,7 +4,7 @@
 //
 //  Vision Hand Pose Skeleton Estimator & Precision Card Classifier.
 //  Uses .right orientation for iPhone Portrait AVCaptureVideoDataOutput buffers to ensure 100% alignment
-//  of Hand Skeleton Landmark Joints and Card Bounding Boxes, with 4-Suit (♦, ♥, ♠, ♣) Recognition!
+//  of Hand Skeleton Landmark Joints and Card Bounding Boxes, with Rotation-Invariant Multi-Corner (0°, 90°, 180°, 270°) Recognition!
 //
 
 import Foundation
@@ -265,40 +265,59 @@ final class CardDetector: ObservableObject {
         return UIImage(cgImage: cgImage)
     }
     
+    /// Multi-Corner & Rotation-Invariant Card Classification (Scans Top-Left, Bottom-Right 180°, Top-Right 90°, Bottom-Left 270°)
     private func classifyCardRankAndSuit(_ uprightCard: UIImage, boundingBox: CGRect, completion: @escaping (CardDetectionResult?) -> Void) {
-        guard let cornerCrop = cropCornerIndexRegion(uprightCard) ?? uprightCard,
-              let cornerCG = cornerCrop.cgImage else {
-            completion(nil)
-            return
-        }
-        
         let detectedSuit = detectCardSuit(uprightCard)
+        let cornerCrops = extractCornerCandidateCrops(uprightCard)
         
-        let ocrRequest = VNRecognizeTextRequest { [weak self] request, error in
-            guard let self = self else {
-                completion(nil)
-                return
-            }
+        var foundRank = ""
+        let group = DispatchGroup()
+        let lock = NSLock()
+        
+        for crop in cornerCrops {
+            guard foundRank.isEmpty, let cgImg = crop.cgImage else { continue }
             
-            var detectedRank = ""
-            if let results = request.results as? [VNRecognizedTextObservation] {
-                for obs in results {
-                    if let cand = obs.topCandidates(1).first {
-                        let text = cand.string.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-                        detectedRank = self.mapOCRTextToRank(text)
+            group.enter()
+            let ocrRequest = VNRecognizeTextRequest { [weak self] request, error in
+                defer { group.leave() }
+                guard let self = self else { return }
+                
+                if let results = request.results as? [VNRecognizedTextObservation] {
+                    for obs in results {
+                        if let cand = obs.topCandidates(1).first {
+                            let text = cand.string.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                            let rank = self.mapOCRTextToRank(text)
+                            if !rank.isEmpty {
+                                lock.lock()
+                                if foundRank.isEmpty {
+                                    foundRank = rank
+                                }
+                                lock.unlock()
+                                break
+                            }
+                        }
                     }
-                    if !detectedRank.isEmpty { break }
                 }
             }
             
-            if detectedRank.isEmpty {
+            ocrRequest.recognitionLevel = .accurate
+            ocrRequest.usesLanguageCorrection = false
+            let ocrHandler = VNImageRequestHandler(cgImage: cgImg, options: [:])
+            try? ocrHandler.perform([ocrRequest])
+            
+            if !foundRank.isEmpty { break }
+        }
+        
+        group.notify(queue: .global()) {
+            var finalRank = foundRank
+            if finalRank.isEmpty {
                 let symbolCount = self.countCardPipSymbols(uprightCard)
-                if symbolCount == 1 { detectedRank = "A" }
-                else if symbolCount >= 2 && symbolCount <= 10 { detectedRank = "\(symbolCount)" }
-                else { detectedRank = "Q" }
+                if symbolCount == 1 { finalRank = "A" }
+                else if symbolCount >= 2 && symbolCount <= 10 { finalRank = "\(symbolCount)" }
+                else { finalRank = "Q" }
             }
             
-            let cardName = "\(detectedRank)\(detectedSuit)"
+            let cardName = "\(finalRank)\(detectedSuit)"
             
             DispatchQueue.main.async {
                 self.detectionBox = boundingBox
@@ -312,21 +331,6 @@ final class CardDetector: ObservableObject {
                 cardImage: uprightCard
             )
             completion(result)
-        }
-        
-        ocrRequest.recognitionLevel = .accurate
-        ocrRequest.usesLanguageCorrection = false
-        
-        let ocrHandler = VNImageRequestHandler(cgImage: cornerCG, options: [:])
-        do {
-            try ocrHandler.perform([ocrRequest])
-        } catch {
-            let cardName = "Q\(detectedSuit)"
-            DispatchQueue.main.async {
-                self.detectionBox = boundingBox
-                self.lastDetectedCard = cardName
-            }
-            completion(CardDetectionResult(cardName: cardName, confidence: 0.85, boundingBox: boundingBox, cardImage: uprightCard))
         }
     }
     
@@ -349,14 +353,67 @@ final class CardDetector: ObservableObject {
         return ""
     }
     
-    private func cropCornerIndexRegion(_ image: UIImage) -> UIImage? {
-        guard let cgImage = image.cgImage else { return nil }
+    /// Extracts 4 corner index regions (Top-Left, Bottom-Right 180°, Top-Right 90°, Bottom-Left 270°) to guarantee 360° Rotation Invariance
+    private func extractCornerCandidateCrops(_ image: UIImage) -> [UIImage] {
+        guard let cgImage = image.cgImage else { return [image] }
         let w = CGFloat(cgImage.width)
         let h = CGFloat(cgImage.height)
+        var crops: [UIImage] = []
         
-        let cornerRect = CGRect(x: 0, y: 0, width: w * 0.35, height: h * 0.40)
-        guard let croppedCG = cgImage.cropping(to: cornerRect) else { return image }
-        return UIImage(cgImage: croppedCG)
+        let cropW = w * 0.38
+        let cropH = h * 0.40
+        
+        // 1. Top-Left Corner (0 deg)
+        let topLeftRect = CGRect(x: 0, y: 0, width: cropW, height: cropH)
+        if let cg1 = cgImage.cropping(to: topLeftRect) {
+            crops.append(UIImage(cgImage: cg1))
+        }
+        
+        // 2. Bottom-Right Corner rotated 180 deg (Upside-Down Card)
+        let bottomRightRect = CGRect(x: w - cropW, y: h - cropH, width: cropW, height: cropH)
+        if let cg2 = cgImage.cropping(to: bottomRightRect), let rotated180 = rotateCGImage(cg2, radians: .pi) {
+            crops.append(UIImage(cgImage: rotated180))
+        }
+        
+        // 3. Top-Right Corner rotated 90 deg counter-clockwise (Sideways Card)
+        let topRightRect = CGRect(x: w - cropW, y: 0, width: cropW, height: cropH)
+        if let cg3 = cgImage.cropping(to: topRightRect), let rotated90 = rotateCGImage(cg3, radians: -.pi / 2) {
+            crops.append(UIImage(cgImage: rotated90))
+        }
+        
+        // 4. Bottom-Left Corner rotated 90 deg clockwise
+        let bottomLeftRect = CGRect(x: 0, y: h - cropH, width: cropW, height: cropH)
+        if let cg4 = cgImage.cropping(to: bottomLeftRect), let rotated270 = rotateCGImage(cg4, radians: .pi / 2) {
+            crops.append(UIImage(cgImage: rotated270))
+        }
+        
+        return crops.isEmpty ? [image] : crops
+    }
+    
+    private func rotateCGImage(_ image: CGImage, radians: CGFloat) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        
+        let rotatedRect = CGRect(x: 0, y: 0, width: width, height: height)
+            .applying(CGAffineTransform(rotationAngle: radians))
+        let rotatedSize = CGSize(width: abs(rotatedRect.width), height: abs(rotatedRect.height))
+        
+        guard let colorSpace = image.colorSpace,
+              let context = CGContext(
+                data: nil,
+                width: Int(rotatedSize.width),
+                height: Int(rotatedSize.height),
+                bitsPerComponent: image.bitsPerComponent,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: image.bitmapInfo.rawValue
+              ) else { return nil }
+        
+        context.translateBy(x: rotatedSize.width / 2.0, y: rotatedSize.height / 2.0)
+        context.rotate(by: radians)
+        context.draw(image, in: CGRect(x: -CGFloat(width) / 2.0, y: -CGFloat(height) / 2.0, width: CGFloat(width), height: CGFloat(height)))
+        
+        return context.makeImage()
     }
     
     /// Detects Card Suit: ♦ (Rô), ♥ (Cơ), ♠ (Bích), ♣ (Tép)
@@ -406,7 +463,6 @@ final class CardDetector: ObservableObject {
         let isRed = totalNonWhite > 0 ? (Float(redPixels) / Float(totalNonWhite) > 0.10) : false
         
         if isRed {
-            // Diamonds (♦) have a pointed top vertex (lower top row density relative to middle)
             if topRowRedPixels < midRowRedPixels / 2 {
                 return "♦"
             } else {
