@@ -2,12 +2,12 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Precise 240 FPS Playing Card & Internal Suit/Pip Shape Analyzer.
+//  Ultra-Precise 240 FPS Playing Card & Inlaid Suit/Pip Shape Analyzer.
 //  Strictly verifies:
-//  1. Card Color Palette: White Paper Base + Red (♥ ♦) / Black (♠ ♣) Suit Inks
-//  2. Card Internal Shapes: Rank & Suit Pips, Figures (A, 2..10, J, Q, K), and High-Contrast Edge Contours
+//  1. White Margin / Border Surrounding Inlaid Red (♥ ♦) / Black (♠ ♣) Symbols
+//  2. Card Inset Geometry: Red & Black inks are small shapes surrounded by clean white paper borders
 //  3. Playing Card Aspect Ratio (0.45..0.88) and Area (2.5%..28%)
-//  Zero tolerance for legs, shorts, thighs, bedsheets, or background furniture.
+//  Zero tolerance for solid black clothes, red wristbands, legs, thighs, or bedsheets.
 //
 
 import Foundation
@@ -118,14 +118,10 @@ final class CardDetector: ObservableObject {
                                     // STRICT RULE 4: Reject human skin tone crops (legs, thighs, arms)
                                     if !self.isHumanSkinTone(cropped) {
                                         
-                                        // STRICT RULE 5: Verify Card Colors (White Paper + Red/Black Inks) & Internal Suit Shapes
+                                        // STRICT RULE 5: White Border Surrounding Inlaid Red/Black Symbols
                                         let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
                                         let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                         
-                                        // A genuine playing card MUST have:
-                                        // - White paper base >= 30%
-                                        // - Red Suit (♥ ♦) or Black Ink (♠ ♣) >= 1.5%
-                                        // - High internal shape contrast or recognized rank letter/number
                                         if analysis.isGenuineCard || hasRankSymbol {
                                             let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
                                             
@@ -304,7 +300,8 @@ final class CardDetector: ObservableObject {
         return skinRatio >= 0.45 // Rejects skin crops if >= 45% skin
     }
     
-    /// Analyzes Playing Card Color Palette (White Paper + Red/Black Suit Inks) & Internal Shape Contrast
+    /// Analyzes Playing Card Color Palette:
+    /// Requires White Paper Border surrounding Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Shapes!
     private func analyzePlayingCardColorsAndSymbols(_ image: UIImage) -> (whiteRatio: Float, suitInkRatio: Float, isGenuineCard: Bool) {
         guard let cgImage = image.cgImage else { return (0, 0, false) }
         let width = 32
@@ -325,47 +322,65 @@ final class CardDetector: ObservableObject {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
         var whitePaperPixels = 0
-        var redSuitPixels = 0     // Cơ (♥), Rô (♦)
-        var blackSuitPixels = 0   // Bích (♠), Chuồn (♣) & Black rank text
+        var borderWhitePixels = 0
+        var borderTotalPixels = 0
+        
+        var redSuitPixels = 0     // Inlaid Red Suits: Cơ (♥), Rô (♦)
+        var blackSuitPixels = 0   // Inlaid Black Suits: Bích (♠), Chuồn (♣) & Rank text
         var totalPixels = 0
         
-        for i in stride(from: 0, to: rawData.count, by: 4) {
-            let r = Float(rawData[i])
-            let g = Float(rawData[i + 1])
-            let b = Float(rawData[i + 2])
-            
-            let maxRGB = max(r, max(g, b))
-            let minRGB = min(r, min(g, b))
-            let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
-            let brightness = (r + g + b) / 3.0
-            
-            // 1. White Card Paper Base
-            if brightness >= 45.0 && saturation <= 0.50 {
-                whitePaperPixels += 1
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = (y * width + x) * 4
+                let r = Float(rawData[idx])
+                let g = Float(rawData[idx + 1])
+                let b = Float(rawData[idx + 2])
+                
+                let maxRGB = max(r, max(g, b))
+                let minRGB = min(r, min(g, b))
+                let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
+                let brightness = (r + g + b) / 3.0
+                
+                let isWhitePixel = (brightness >= 45.0 && saturation <= 0.50)
+                let isRedPixel = (r >= 100 && r > 1.35 * g && r > 1.35 * b && saturation >= 0.35)
+                let isBlackPixel = (brightness <= 50.0 && saturation <= 0.35)
+                
+                if isWhitePixel {
+                    whitePaperPixels += 1
+                }
+                
+                // Check Outer Perimeter Border (Top/Bottom 3 rows, Left/Right 2 cols)
+                let isBorderPixel = (y < 3 || y >= height - 3 || x < 2 || x >= width - 2)
+                if isBorderPixel {
+                    borderTotalPixels += 1
+                    if isWhitePixel {
+                        borderWhitePixels += 1
+                    }
+                } else {
+                    // Interior Island Symbols (Inside the White Border)
+                    if isRedPixel {
+                        redSuitPixels += 1
+                    }
+                    if isBlackPixel {
+                        blackSuitPixels += 1
+                    }
+                }
+                
+                totalPixels += 1
             }
-            
-            // 2. Red Suit Symbols (♥ Cơ, ♦ Rô)
-            if r >= 100 && r > 1.35 * g && r > 1.35 * b && saturation >= 0.35 {
-                redSuitPixels += 1
-            }
-            
-            // 3. Black Suit Symbols (♠ Bích, ♣ Chuồn & Black Numbers)
-            if brightness <= 50.0 && saturation <= 0.35 {
-                blackSuitPixels += 1
-            }
-            
-            totalPixels += 1
         }
         
         let whiteRatio = totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
+        let borderWhiteRatio = borderTotalPixels > 0 ? Float(borderWhitePixels) / Float(borderTotalPixels) : 0.0
         let redRatio = totalPixels > 0 ? Float(redSuitPixels) / Float(totalPixels) : 0.0
         let blackRatio = totalPixels > 0 ? Float(blackSuitPixels) / Float(totalPixels) : 0.0
         let suitInkRatio = redRatio + blackRatio
         
-        // A genuine playing card must have:
-        // - At least 30% white paper
-        // - At least 1.5% printed suit symbol ink (Red or Black)
-        let isGenuine = (whiteRatio >= 0.30) && (suitInkRatio >= 0.015)
+        // A GENUINE PLAYING CARD MUST SATISFY:
+        // 1. Overall White Paper Field >= 30%
+        // 2. Outer Perimeter Border is White Paper >= 35% (Viền trắng bao quanh lá bài!)
+        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.5% and <= 40% (Chất bài nằm lọt bên trong viền trắng!)
+        let isGenuine = (whiteRatio >= 0.30) && (borderWhiteRatio >= 0.35) && (suitInkRatio >= 0.015 && suitInkRatio <= 0.40)
         return (whiteRatio, suitInkRatio, isGenuine)
     }
 }
