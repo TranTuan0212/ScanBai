@@ -3,8 +3,8 @@
 //  CardLink
 //
 //  240 FPS Vision AI Card Detector & Sharp Card Surface Cropper.
-//  Strictly rejects computer monitor screens, UI boxes, and laptop keyboards
-//  by requiring Hand Proximity Verification & Real Playing Card White Paper Score >= 0.40.
+//  STRICT RULE ENFORCED: Must have an active human hand skeleton touching/holding
+//  the card rectangle! Without a human hand skeleton, NO card can be detected.
 //
 
 import Foundation
@@ -25,7 +25,7 @@ final class CardDetector: ObservableObject {
     @Published var lastDetectedCard: String?
     @Published var detectionBox: CGRect?
     @Published var handSkeletonPoints: [CGPoint] = []
-    @Published var debugLogText: String = "HAND JOINTS: 0 | CARD SCORE: -1.00"
+    @Published var debugLogText: String = "NO HAND DETECTED"
     
     static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var smoothedBox: CGRect?
@@ -44,22 +44,22 @@ final class CardDetector: ObservableObject {
             
             // 2. Rectangle Detection Request for Cards
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.45
-            rectRequest.maximumAspectRatio = 0.90
-            rectRequest.minimumSize = 0.04
+            rectRequest.minimumAspectRatio = 0.40
+            rectRequest.maximumAspectRatio = 0.95
+            rectRequest.minimumSize = 0.03
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 30
+            rectRequest.quadratureTolerance = 35
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
                 
-                // Process Hand Skeleton Joints
+                // Extract Hand Skeleton Joints
                 var extractedJoints: [CGPoint] = []
                 if let handObservations = handPoseRequest.results as? [VNHumanHandPoseObservation], !handObservations.isEmpty {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.30 {
+                                if pointKey.confidence > 0.25 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -71,11 +71,21 @@ final class CardDetector: ObservableObject {
                     self.handSkeletonPoints = extractedJoints
                 }
                 
+                // MANDATORY RULE: NO HUMAN HAND SKELETON DETECTED -> NO CARD CAN EXIST!
+                guard !extractedJoints.isEmpty else {
+                    DispatchQueue.main.async {
+                        self.detectionBox = nil
+                        self.debugLogText = "NO HAND SKELETON -> CARD DISABLED"
+                    }
+                    completion(nil)
+                    return
+                }
+                
                 // Process Card Rectangles
                 guard let rectResults = rectRequest.results as? [VNRectangleObservation], !rectResults.isEmpty else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
-                        self.debugLogText = "JOINTS:\(extractedJoints.count) | NO RECT"
+                        self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | NO RECT"
                     }
                     completion(nil)
                     return
@@ -86,34 +96,41 @@ final class CardDetector: ObservableObject {
                 
                 for rect in rectResults {
                     let b = rect.boundingBox
+                    let cardBoxNormalized = CGRect(
+                        x: b.origin.x,
+                        y: 1.0 - b.origin.y - b.height,
+                        width: b.width,
+                        height: b.height
+                    )
+                    
                     let area = b.width * b.height
                     let ratio = min(b.width, b.height) / max(b.width, b.height)
                     
                     // Standard playing card ratio is ~0.60 - 0.75 (2.5" x 3.5")
-                    if area >= 0.02 && area <= 0.75 && ratio >= 0.45 && ratio <= 0.90 {
-                        // Check Hand Proximity: Card MUST be near human hand joints OR have high white paper score
-                        let cardCenter = CGPoint(x: b.midX, y: 1.0 - b.midY)
-                        let isNearHand = self.isCardNearHand(cardCenter: cardCenter, handJoints: extractedJoints)
+                    if area >= 0.015 && area <= 0.80 && ratio >= 0.40 && ratio <= 0.95 {
                         
-                        if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
-                            let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
-                            
-                            // REQUIREMENT: High white paper score (>= 0.38) AND (hand proximity OR white paper >= 0.50)
-                            let isValidPlayingCard = (whitePaperScore >= 0.38) && (isNearHand || whitePaperScore >= 0.50)
-                            
-                            if isValidPlayingCard && whitePaperScore > maxCardWhiteScore {
-                                maxCardWhiteScore = whitePaperScore
-                                bestCardRect = rect
+                        // STRICT RULE: Human hand MUST be physically touching / overlapping this card rectangle!
+                        let isHandTouchingCard = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
+                        
+                        if isHandTouchingCard {
+                            if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
+                                let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
+                                
+                                // Must pass white paper surface threshold (>= 0.35)
+                                if whitePaperScore >= 0.35 && whitePaperScore > maxCardWhiteScore {
+                                    maxCardWhiteScore = whitePaperScore
+                                    bestCardRect = rect
+                                }
                             }
                         }
                     }
                 }
                 
                 DispatchQueue.main.async {
-                    self.debugLogText = "JOINTS:\(extractedJoints.count) | CARD WHITE:\(String(format: "%.2f", maxCardWhiteScore))"
+                    self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxCardWhiteScore))"
                 }
                 
-                // STRICT: If no rect passed white paper & hand proximity check, RETURN NIL! DO NOT FALLBACK TO RANDOM RECTS!
+                // STRICT: If no rectangle was touched by hand or failed white score, return nil!
                 guard let cardRect = bestCardRect else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
@@ -139,8 +156,8 @@ final class CardDetector: ObservableObject {
                 // Straighten & Crop sharpest card surface
                 if let uprightCard = self.rectifyAndUnrotateCard(portraitCIImage, rect: cardRect, width: portraitWidth, height: portraitHeight) {
                     let result = CardDetectionResult(
-                        cardName: "LÁ BÀI SẮC NÉT 240FPS",
-                        confidence: 0.95,
+                        cardName: "LÁ BÀI CÓ KHUNG TAY 240FPS",
+                        confidence: 0.98,
                         boundingBox: targetBox,
                         cardImage: uprightCard
                     )
@@ -154,14 +171,13 @@ final class CardDetector: ObservableObject {
         }
     }
     
-    /// Checks if card center is near any human hand joint (distance <= 0.40 in normalized space)
-    private func isCardNearHand(cardCenter: CGPoint, handJoints: [CGPoint]) -> Bool {
-        guard !handJoints.isEmpty else { return true } // If hand pose is occluded, rely on white paper score
+    /// Checks if any human hand joint physically touches / overlaps the card rectangle
+    private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
+        // Expand card box slightly by 20% margin to cover fingers holding edges of the card
+        let expandedBox = cardBox.insetBy(dx: -0.20 * cardBox.width, dy: -0.20 * cardBox.height)
+        
         for joint in handJoints {
-            let dx = cardCenter.x - joint.x
-            let dy = cardCenter.y - joint.y
-            let dist = sqrt(dx * dx + dy * dy)
-            if dist <= 0.40 {
+            if expandedBox.contains(joint) {
                 return true
             }
         }
@@ -193,7 +209,6 @@ final class CardDetector: ObservableObject {
     }
     
     /// Calculates Pure Playing Card White Paper Score
-    /// Rejects dark laptop screens, yellow icons, and blue UI containers!
     private func calculatePlayingCardWhiteScore(_ image: UIImage) -> Float {
         guard let cgImage = image.cgImage else { return 0.0 }
         let width = 32
@@ -226,9 +241,7 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            // Playing card white paper condition:
-            // High brightness (>= 105) AND low saturation (<= 0.42)
-            if brightness >= 105.0 && saturation <= 0.42 {
+            if brightness >= 95.0 && saturation <= 0.45 {
                 whitePaperPixels += 1
             }
             totalPixels += 1
