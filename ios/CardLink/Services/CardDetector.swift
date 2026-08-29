@@ -2,11 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Precise 240 FPS Playing Card Detector.
-//  Strictly enforces:
-//  1. Real Pixel Aspect Ratio (0.58..0.82) based on true unnormalized camera resolution.
-//  2. HSV Indoor Skin Tone Rejection (Rejects 100% of legs, shins, arms, feet, thighs).
-//  3. White Paper Margin + Inlaid Red (♥ ♦) / Black (♠ ♣) Suit & Rank Symbol verification.
+//  Ultra-Precise 240 FPS Direct Playing Card Detector with 4-Corner & Full-Card OCR.
+//  Recognizes cards regardless of how the dealer holds them (all 4 corners + full card surface).
+//  Optimized for low-light & warm indoor room lighting (dim tungsten & flash).
 //
 
 import Foundation
@@ -46,8 +44,8 @@ final class CardDetector: ObservableObject {
             let rectRequest = VNDetectRectanglesRequest()
             rectRequest.minimumAspectRatio = 0.30
             rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.020
-            rectRequest.minimumConfidence = 0.15
+            rectRequest.minimumSize = 0.015
+            rectRequest.minimumConfidence = 0.12
             rectRequest.maximumObservations = 8
             rectRequest.quadratureTolerance = 45
             
@@ -57,6 +55,7 @@ final class CardDetector: ObservableObject {
                 var bestCardBoxNormalized: CGRect? = nil
                 var bestCropBoxNormalized: CGRect? = nil
                 var maxScore: Float = -1.0
+                var detectedCardName: String = "LÁ BÀI 240FPS"
                 
                 if let rectResults = rectRequest.results, !rectResults.isEmpty {
                     for rect in rectResults {
@@ -70,30 +69,32 @@ final class CardDetector: ObservableObject {
                         
                         let area = b.width * b.height
                         
-                        // 1. REAL PIXEL ASPECT RATIO (Corrected for 9:16 portrait screen distortion)
+                        // 1. REAL PIXEL ASPECT RATIO (Corrected for horizontal & vertical orientation)
                         let pixelWidth = b.width * CGFloat(portraitWidth)
                         let pixelHeight = b.height * CGFloat(portraitHeight)
                         let realPixelAspect = min(pixelWidth, pixelHeight) / max(pixelWidth, pixelHeight)
                         
-                        // Strict Playing Card Real Aspect Ratio (0.58..0.82) and Area (2.0%..30%)
-                        // Instantly rejects tall skinny legs/shins/bed stripes (aspect 0.25..0.45)!
-                        if area >= 0.020 && area <= 0.30 && realPixelAspect >= 0.58 && realPixelAspect <= 0.82 {
+                        // Valid playing card aspect ratio (0.50..0.85) and area (1.5%..35%)
+                        if area >= 0.015 && area <= 0.35 && realPixelAspect >= 0.50 && realPixelAspect <= 0.85 {
                             
                             if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
                                 
-                                // 2. HSV Indoor Skin Tone Rejection (Rejects legs, shins, arms, feet)
+                                // 2. Reject skin tone crops (shins, legs, thighs)
                                 if !self.isHumanSkinTone(cropped) {
                                     
-                                    // 3. Verify Card Color Palette (White Paper Border + Red/Black Suit Inks)
+                                    // 3. Multi-Corner & Full Surface Rank OCR (reads A..K, 2..10 on any visible corner!)
+                                    let rankOCR = self.recognizeCardRankAcrossAllCorners(cropped)
                                     let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
-                                    let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                     
-                                    if analysis.isGenuineCard || hasRankSymbol {
-                                        let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
+                                    if rankOCR.found || analysis.isGenuineCard {
+                                        let score = analysis.whiteRatio + analysis.suitInkRatio * 2.5 + (rankOCR.found ? 3.0 : 0.0)
                                         
                                         if score > maxScore {
                                             maxScore = score
                                             bestCardBoxNormalized = cardBoxNormalized
+                                            if let rank = rankOCR.rank {
+                                                detectedCardName = "LÁ BÀI: \(rank)"
+                                            }
                                             
                                             let marginX = rect.boundingBox.width * 0.20
                                             let marginY = rect.boundingBox.height * 0.20
@@ -131,12 +132,12 @@ final class CardDetector: ObservableObject {
                 
                 DispatchQueue.main.async {
                     self.detectionBox = smoothedTarget
-                    self.debugLogText = "🎴 CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
+                    self.debugLogText = "🎴 \(detectedCardName) (SCORE:\(String(format: "%.2f", maxScore)))"
                 }
                 
                 if let zoomedCardImage = self.cropRegionOfInterest(portraitCIImage, normalizedBox: cropBox, width: portraitWidth, height: portraitHeight) {
                     let result = CardDetectionResult(
-                        cardName: "LÁ BÀI 240FPS",
+                        cardName: detectedCardName,
                         confidence: 0.98,
                         boundingBox: smoothedTarget,
                         cardImage: zoomedCardImage
@@ -151,36 +152,31 @@ final class CardDetector: ObservableObject {
         }
     }
     
-    private func containsCardRankSymbol(_ image: UIImage) -> Bool {
-        guard let cgImage = image.cgImage else { return false }
+    /// Scans the entire card AND all 4 corners so rank is recognized even when fingers cover 1-2 corners!
+    private func recognizeCardRankAcrossAllCorners(_ image: UIImage) -> (found: Bool, rank: String?) {
+        guard let cgImage = image.cgImage else { return (false, nil) }
         
-        let cornerWidth = Int(CGFloat(cgImage.width) * 0.40)
-        let cornerHeight = Int(CGFloat(cgImage.height) * 0.45)
-        let cornerRect = CGRect(x: 0, y: 0, width: cornerWidth, height: cornerHeight)
-        
-        guard let cornerCG = cgImage.cropping(to: cornerRect) else { return false }
-        
-        let requestHandler = VNImageRequestHandler(cgImage: cornerCG, options: [:])
+        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
         let textRequest = VNRecognizeTextRequest()
         textRequest.recognitionLevel = .fast
         
         do {
             try requestHandler.perform([textRequest])
             if let results = textRequest.results {
+                let cardRanks = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"]
                 for observation in results {
                     if let candidate = observation.topCandidates(1).first {
-                        let text = candidate.string.uppercased()
-                        let cardRanks = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+                        let text = candidate.string.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
                         for rank in cardRanks {
-                            if text.contains(rank) {
-                                return true
+                            if text == rank || text.hasPrefix(rank) || text.hasSuffix(rank) {
+                                return (true, rank)
                             }
                         }
                     }
                 }
             }
         } catch {}
-        return false
+        return (false, nil)
     }
     
     private func smoothBox(_ newBox: CGRect) -> CGRect {
@@ -257,11 +253,10 @@ final class CardDetector: ObservableObject {
         }
         
         let skinRatio = totalPixels > 0 ? Float(skinPixels) / Float(totalPixels) : 0.0
-        return skinRatio >= 0.35 // Rejects crops with >= 35% skin tone
+        return skinRatio >= 0.40 // Rejects crops with >= 40% skin tone
     }
     
-    /// Analyzes Playing Card Color Palette:
-    /// Requires White Paper Border surrounding Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Shapes!
+    /// Analyzes Playing Card Color Palette in Warm / Dim Room Lighting:
     private func analyzePlayingCardColorsAndSymbols(_ image: UIImage) -> (whiteRatio: Float, suitInkRatio: Float, isGenuineCard: Bool) {
         guard let cgImage = image.cgImage else { return (0, 0, false) }
         let width = 32
@@ -301,9 +296,12 @@ final class CardDetector: ObservableObject {
                 let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
                 let brightness = (r + g + b) / 3.0
                 
-                let isWhitePixel = (brightness >= 45.0 && saturation <= 0.45)
-                let isRedPixel = (r >= 100 && r > 1.30 * g && r > 1.30 * b && saturation >= 0.35)
-                let isBlackPixel = (brightness <= 50.0 && saturation <= 0.35)
+                // Warm room light white paper (brightness >= 35.0)
+                let isWhitePixel = (brightness >= 35.0 && saturation <= 0.48)
+                // Red suits (♥ ♦)
+                let isRedPixel = (r >= 85 && r > 1.20 * g && r > 1.20 * b && saturation >= 0.30)
+                // Black suits (♠ ♣ - 6 Chuồn, Át Bích)
+                let isBlackPixel = (brightness <= 65.0 && saturation <= 0.38)
                 
                 if isWhitePixel {
                     whitePaperPixels += 1
@@ -336,11 +334,7 @@ final class CardDetector: ObservableObject {
         let blackRatio = totalPixels > 0 ? Float(blackSuitPixels) / Float(totalPixels) : 0.0
         let suitInkRatio = redRatio + blackRatio
         
-        // A GENUINE PLAYING CARD MUST SATISFY:
-        // 1. Overall White Paper Field >= 25%
-        // 2. Outer Perimeter Border is White Paper >= 25% (Viền trắng bao quanh lá bài!)
-        // 3. Inlaid Red (♥ ♦) or Black (♠ ♣) Symbol Ink >= 1.0% and <= 40%
-        let isGenuine = (whiteRatio >= 0.25) && (borderWhiteRatio >= 0.25) && (suitInkRatio >= 0.010 && suitInkRatio <= 0.40)
+        let isGenuine = (whiteRatio >= 0.20) && (suitInkRatio >= 0.008 && suitInkRatio <= 0.45)
         return (whiteRatio, suitInkRatio, isGenuine)
     }
 }
