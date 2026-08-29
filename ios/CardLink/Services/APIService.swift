@@ -25,7 +25,9 @@ struct StartSessionResponse: Codable {
 
 final class APIService {
     static let shared = APIService()
-    var serverIP: String = "192.168.1.3"
+    private var serverIP: String {
+        return DeviceUtils.getServerIP()
+    }
     private var baseURL: String {
         return "http://\(serverIP):3000/api"
     }
@@ -34,14 +36,11 @@ final class APIService {
     private init() {}
     
     func setServerIP(_ ip: String) {
-        let cleanIp = ip.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanIp.isEmpty {
-            self.serverIP = cleanIp
-        }
+        DeviceUtils.saveServerIP(ip)
     }
     
     func getServerIP() -> String {
-        return serverIP
+        return DeviceUtils.getServerIP()
     }
     
     func setAuthToken(_ token: String) {
@@ -88,7 +87,7 @@ final class APIService {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         
-        let body = ["deviceId": UUID().uuidString]
+        let body = ["deviceId": DeviceUtils.getDeviceId()]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
         URLSession.shared.dataTask(with: request) { data, response, error in

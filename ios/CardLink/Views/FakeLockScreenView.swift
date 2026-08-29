@@ -109,9 +109,10 @@ struct FakeLockScreenView: View {
             }
         }
         .onAppear {
-            // 1. Store original brightness & dim screen to 0.05
+            // 1. Store original brightness & dim screen to 0.01 (ultra stealth & zero battery drain)
             originalBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = 0.05
+            UIScreen.main.brightness = 0.01
+            UIApplication.shared.isIdleTimerDisabled = true
             
             // 2. Start clock timer
             timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
@@ -119,8 +120,9 @@ struct FakeLockScreenView: View {
             }
         }
         .onDisappear {
-            // Restore original screen brightness
+            // Restore original screen brightness and re-enable idle timer
             UIScreen.main.brightness = originalBrightness
+            UIApplication.shared.isIdleTimerDisabled = false
             timer?.invalidate()
         }
         // Double-Tap Gesture to Unlock

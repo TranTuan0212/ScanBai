@@ -252,37 +252,35 @@ struct LiveView: View {
         .onAppear {
             setupSlicerCallbacks()
             cameraManager.setupAndStartSession { pixelBuffer in
-                // 60 FPS Dynamic Motion Tracking & Frame Streaming (every 16ms)
-                let now = Date().timeIntervalSince1970
-                guard now - self.lastProcessedTime >= 0.016 else { return }
-                self.lastProcessedTime = now
-                
                 autoreleasepool {
                     guard let uiImage = self.pixelBufferToUIImage(pixelBuffer) else { return }
                     DispatchQueue.main.async {
                         self.latestUIImage = uiImage
                     }
                     
-                    // Stream live video frame to Backend & Admin Dashboard
-                    if self.isLiveActive, let jpegData = uiImage.jpegData(compressionQuality: 0.30) {
-                        let base64String = jpegData.base64EncodedString()
-                        let dataUri = "data:image/jpeg;base64,\(base64String)"
-                        self.socketManager.sendLiveFrame(sessionId: self.sessionId, dataUri: dataUri)
+                    // 1. Stream live video frame to Backend downsampled to 20 FPS (~50ms) to save bandwidth
+                    let now = Date().timeIntervalSince1970
+                    if self.isLiveActive && (now - self.lastProcessedTime >= 0.050) {
+                        self.lastProcessedTime = now
+                        if let jpegData = uiImage.jpegData(compressionQuality: 0.25) {
+                            let base64String = jpegData.base64EncodedString()
+                            let dataUri = "data:image/jpeg;base64,\(base64String)"
+                            self.socketManager.sendLiveFrame(sessionId: self.sessionId, dataUri: dataUri)
+                        }
                     }
                     
-                    // Process frame through Vision AI card detector
+                    // 2. Full 240 FPS AI Motion & Card Slicer processing
                     self.cardDetector.processPixelBuffer(pixelBuffer) { result in
-                        if let result = result {
-                            self.cardSlicer.processFrame(uiImage, whitePaperRatio: 0.25)
-                            if self.isLiveActive {
-                                let label = result.cardName
-                                let cardImgBase64 = result.cardImage?.jpegData(compressionQuality: 0.4)?.base64EncodedString() ?? ""
-                                self.socketManager.sendCardDetected(
-                                    sessionId: self.sessionId,
-                                    label: label,
-                                    imageBase64: cardImgBase64
-                                )
-                            }
+                        let confidence = result?.confidence ?? 0.0
+                        self.cardSlicer.processFrame(uiImage, whitePaperRatio: 0.25, confidence: confidence)
+                        if self.isLiveActive, let result = result {
+                            let label = result.cardName
+                            let cardImgBase64 = result.cardImage?.jpegData(compressionQuality: 0.4)?.base64EncodedString() ?? ""
+                            self.socketManager.sendCardDetected(
+                                sessionId: self.sessionId,
+                                label: label,
+                                imageBase64: cardImgBase64
+                            )
                         }
                     }
                 }

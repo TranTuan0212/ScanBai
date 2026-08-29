@@ -15,17 +15,16 @@ final class iOSSocketManager: ObservableObject {
     
     @Published var isConnected = false
     private var webSocketTask: URLSessionWebSocketTask?
-    private var serverIP: String = "192.168.1.3"
+    private var serverIP: String {
+        return DeviceUtils.getServerIP()
+    }
     private var pendingSessionId: String?
     private var pingTimer: Timer?
     
     private init() {}
     
     func setServerIP(_ ip: String) {
-        let cleanIp = ip.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanIp.isEmpty {
-            self.serverIP = cleanIp
-        }
+        DeviceUtils.saveServerIP(ip)
     }
     
     func connect(token: String = "") {
