@@ -152,13 +152,14 @@ final class CardDetector: ObservableObject {
                     self.detectionBox = targetBox
                 }
                 
-                // Straighten & Crop sharpest card surface
-                if let uprightCard = self.rectifyAndUnrotateCard(portraitCIImage, rect: cardRect, width: portraitWidth, height: portraitHeight) {
+                // Create full original photo of the camera scene
+                if let cgImage = CardDetector.ciContext.createCGImage(portraitCIImage, from: portraitCIImage.extent) {
+                    let fullOriginalImage = UIImage(cgImage: cgImage)
                     let result = CardDetectionResult(
                         cardName: "LÁ BÀI CÓ KHUNG TAY 240FPS",
                         confidence: 0.98,
                         boundingBox: targetBox,
-                        cardImage: uprightCard
+                        cardImage: fullOriginalImage
                     )
                     completion(result)
                 } else {
