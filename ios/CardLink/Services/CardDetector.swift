@@ -2,9 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  240 FPS Vision AI Card Detector & Sharp Card Surface Cropper.
-//  STRICT RULE ENFORCED: Must have an active human hand skeleton touching/holding
-//  the card rectangle! Without a human hand skeleton, NO card can be detected.
+//  Ultra High-Speed 240 FPS Motion-Blur Resilient Card & Hand Detector.
+//  Optimized for fast-flicking card motion gestures. Uses expanded Hand Touch Margin (30%)
+//  and motion-blur resilient white paper threshold (>= 0.15) when hand is present.
 //
 
 import Foundation
@@ -42,13 +42,13 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Cards
+            // 2. Rectangle Detection Request for Cards (Fast Motion Optimized)
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.40
-            rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.03
+            rectRequest.minimumAspectRatio = 0.35
+            rectRequest.maximumAspectRatio = 0.98
+            rectRequest.minimumSize = 0.02
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 35
+            rectRequest.quadratureTolerance = 45
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -59,7 +59,7 @@ final class CardDetector: ObservableObject {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.25 {
+                                if pointKey.confidence > 0.20 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -85,7 +85,7 @@ final class CardDetector: ObservableObject {
                 guard let rectResults = rectRequest.results as? [VNRectangleObservation], !rectResults.isEmpty else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
-                        self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | NO RECT"
+                        self.debugLogText = "JOINTS:\(extractedJoints.count) | NO RECT"
                     }
                     completion(nil)
                     return
@@ -106,18 +106,17 @@ final class CardDetector: ObservableObject {
                     let area = b.width * b.height
                     let ratio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    // Standard playing card ratio is ~0.60 - 0.75 (2.5" x 3.5")
-                    if area >= 0.015 && area <= 0.80 && ratio >= 0.40 && ratio <= 0.95 {
+                    if area >= 0.010 && area <= 0.85 && ratio >= 0.35 && ratio <= 0.98 {
                         
-                        // STRICT RULE: Human hand MUST be physically touching / overlapping this card rectangle!
+                        // Fast Motion Rule: Check if hand touches card (with 30% margin for fast flicking fingers)
                         let isHandTouchingCard = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
                         
                         if isHandTouchingCard {
                             if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
                                 let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
                                 
-                                // Must pass white paper surface threshold (>= 0.35)
-                                if whitePaperScore >= 0.35 && whitePaperScore > maxCardWhiteScore {
+                                // Motion-blur resilient white paper threshold (>= 0.15 when hand is present)
+                                if whitePaperScore >= 0.15 && whitePaperScore > maxCardWhiteScore {
                                     maxCardWhiteScore = whitePaperScore
                                     bestCardRect = rect
                                 }
@@ -127,10 +126,9 @@ final class CardDetector: ObservableObject {
                 }
                 
                 DispatchQueue.main.async {
-                    self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxCardWhiteScore))"
+                    self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | FAST MOTION SCORE:\(String(format: "%.2f", maxCardWhiteScore))"
                 }
                 
-                // STRICT: If no rectangle was touched by hand or failed white score, return nil!
                 guard let cardRect = bestCardRect else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
@@ -172,9 +170,9 @@ final class CardDetector: ObservableObject {
     }
     
     /// Checks if any human hand joint physically touches / overlaps the card rectangle
+    /// Expanded margin (30%) for fast-flicking fingers during motion blur
     private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        // Expand card box slightly by 20% margin to cover fingers holding edges of the card
-        let expandedBox = cardBox.insetBy(dx: -0.20 * cardBox.width, dy: -0.20 * cardBox.height)
+        let expandedBox = cardBox.insetBy(dx: -0.30 * cardBox.width, dy: -0.30 * cardBox.height)
         
         for joint in handJoints {
             if expandedBox.contains(joint) {
@@ -186,7 +184,7 @@ final class CardDetector: ObservableObject {
     
     private func smoothBox(_ newBox: CGRect) -> CGRect {
         guard let prev = smoothedBox else { return newBox }
-        let alpha: CGFloat = 0.45
+        let alpha: CGFloat = 0.60
         return CGRect(
             x: prev.origin.x * (1 - alpha) + newBox.origin.x * alpha,
             y: prev.origin.y * (1 - alpha) + newBox.origin.y * alpha,
@@ -241,7 +239,7 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            if brightness >= 95.0 && saturation <= 0.45 {
+            if brightness >= 80.0 && saturation <= 0.50 {
                 whitePaperPixels += 1
             }
             totalPixels += 1

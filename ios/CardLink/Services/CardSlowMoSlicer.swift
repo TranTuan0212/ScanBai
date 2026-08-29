@@ -86,12 +86,12 @@ final class CardSlowMoSlicer: ObservableObject {
             activeFrames.removeFirst()
         }
         
-        // Requires 3 consecutive frames (~12ms) to confirm deal motion
-        if consecutiveFrameCount >= 3 {
+        // Instant Fast Motion Gate: Requires only 1 frame (~4ms) to capture rapid flicking gestures!
+        if consecutiveFrameCount >= 1 {
             isCardActive = true
             
             // STRICT DEDUPLICATION: If card is currently active and hasn't been emitted yet for this slot, emit now!
-            if !hasSentCurrentCardSlot && now.timeIntervalSince(lastEmitTime) >= 0.4 {
+            if !hasSentCurrentCardSlot && now.timeIntervalSince(lastEmitTime) >= 0.25 {
                 if !activeFrames.isEmpty {
                     let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
                     extractAndEmitCard(sharpestImage)
