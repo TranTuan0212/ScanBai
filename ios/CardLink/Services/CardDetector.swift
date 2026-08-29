@@ -58,7 +58,7 @@ final class CardDetector: ObservableObject {
                 
                 // Extract Hand Skeleton Joints
                 var extractedJoints: [CGPoint] = []
-                if let handObservations = handPoseRequest.results as? [VNHumanHandPoseObservation], !handObservations.isEmpty {
+                if let handObservations = handPoseRequest.results, !handObservations.isEmpty {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
@@ -79,7 +79,7 @@ final class CardDetector: ObservableObject {
                 var maxScore: Float = -1.0
                 
                 // 3. Stage 1: Check Rectangle Detection Results
-                if let rectResults = rectRequest.results as? [VNRectangleObservation], !rectResults.isEmpty {
+                if let rectResults = rectRequest.results, !rectResults.isEmpty {
                     for rect in rectResults {
                         let b = rect.boundingBox
                         let cardBoxNormalized = CGRect(
@@ -128,7 +128,8 @@ final class CardDetector: ObservableObject {
                 // 4. Stage 2 Fallback: Hand Pose Anchor Box (If strict rectangle fails due to motion blur)
                 if bestCardBoxNormalized == nil, !extractedJoints.isEmpty {
                     let handBox = self.boundingBoxForJoints(extractedJoints)
-                    let cardAnchorBox = handBox.insetBy(dx: -0.30 * handBox.width, dy: -0.30 * handBox.height).clampedToUnitRect()
+                    let insetBox = handBox.insetBy(dx: -0.30 * handBox.width, dy: -0.30 * handBox.height)
+                    let cardAnchorBox = self.clampToUnitRect(insetBox)
                     bestCardBoxNormalized = cardAnchorBox
                     bestCropBoxNormalized = cardAnchorBox
                     maxScore = 0.85
@@ -176,6 +177,14 @@ final class CardDetector: ObservableObject {
         }
     }
     
+    private func clampToUnitRect(_ rect: CGRect) -> CGRect {
+        let minX = max(0.0, rect.origin.x)
+        let minY = max(0.0, rect.origin.y)
+        let maxX = min(1.0, rect.origin.x + rect.width)
+        let maxY = min(1.0, rect.origin.y + rect.height)
+        return CGRect(x: minX, y: minY, width: max(0.05, maxX - minX), height: max(0.05, maxY - minY))
+    }
+    
     private func boundingBoxForJoints(_ joints: [CGPoint]) -> CGRect {
         var minX = CGFloat.greatestFiniteMagnitude
         var minY = CGFloat.greatestFiniteMagnitude
@@ -219,7 +228,7 @@ final class CardDetector: ObservableObject {
         
         do {
             try requestHandler.perform([textRequest])
-            if let results = textRequest.results as? [VNRecognizedTextObservation] {
+            if let results = textRequest.results {
                 for observation in results {
                     if let candidate = observation.topCandidates(1).first {
                         let text = candidate.string.uppercased()
