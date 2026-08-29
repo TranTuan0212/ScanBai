@@ -302,6 +302,8 @@ final class CardDetector: ObservableObject {
             
             ocrRequest.recognitionLevel = .accurate
             ocrRequest.usesLanguageCorrection = false
+            ocrRequest.customWords = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+            ocrRequest.recognitionLanguages = ["en-US"]
             let ocrHandler = VNImageRequestHandler(cgImage: cgImg, options: [:])
             try? ocrHandler.perform([ocrRequest])
             
@@ -314,7 +316,7 @@ final class CardDetector: ObservableObject {
                 let symbolCount = self.countCardPipSymbols(uprightCard)
                 if symbolCount == 1 { finalRank = "A" }
                 else if symbolCount >= 2 && symbolCount <= 10 { finalRank = "\(symbolCount)" }
-                else { finalRank = "Q" }
+                else { finalRank = "9" }
             }
             
             let cardName = "\(finalRank)\(detectedSuit)"
@@ -337,12 +339,13 @@ final class CardDetector: ObservableObject {
     /// Precision OCR Rank mapping prioritizing face cards (Q, K, J, A) over digits to avoid false 10 matches
     private func mapOCRTextToRank(_ text: String) -> String {
         let cleaned = text.uppercased().replacingOccurrences(of: " ", with: "")
+        if cleaned == "9" || cleaned == "6" { return cleaned }
+        if cleaned.contains("9") { return "9" }
         if cleaned.contains("Q") { return "Q" }
         if cleaned.contains("K") { return "K" }
         if cleaned.contains("J") { return "J" }
         if cleaned.contains("A") { return "A" }
-        if cleaned.contains("10") || cleaned.contains("IO") || cleaned.contains("I0") || cleaned.contains("1O") { return "10" }
-        if cleaned.contains("9") { return "9" }
+        if cleaned.contains("10") { return "10" }
         if cleaned.contains("8") || cleaned.contains("B") { return "8" }
         if cleaned.contains("7") || cleaned.contains("T") || cleaned.contains("Z") { return "7" }
         if cleaned.contains("6") || cleaned.contains("G") { return "6" }
@@ -350,6 +353,7 @@ final class CardDetector: ObservableObject {
         if cleaned.contains("4") { return "4" }
         if cleaned.contains("3") { return "3" }
         if cleaned.contains("2") { return "2" }
+        if cleaned.contains("IO") || cleaned.contains("I0") || cleaned.contains("1O") { return "10" }
         return ""
     }
     

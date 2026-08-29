@@ -39,26 +39,19 @@ struct LiveView: View {
             // 2. Real-Time Hand Pose Skeleton Landmark Overlay (Cyan Joints)
             GeometryReader { geometry in
                 ForEach(cardDetector.handSkeletonPoints.indices, id: \.self) { idx in
+                    let pt = aspectFillPoint(cardDetector.handSkeletonPoints[idx], in: geometry.size)
                     Circle()
                         .fill(Color.cyan)
                         .frame(width: 8, height: 8)
                         .shadow(color: .cyan, radius: 3)
-                        .position(
-                            x: cardDetector.handSkeletonPoints[idx].x * geometry.size.width,
-                            y: cardDetector.handSkeletonPoints[idx].y * geometry.size.height
-                        )
+                        .position(pt)
                 }
             }
             
             // 3. AI Card Bounding Box Overlay
             if let box = cardDetector.detectionBox {
                 GeometryReader { geometry in
-                    let rect = CGRect(
-                        x: box.origin.x * geometry.size.width,
-                        y: box.origin.y * geometry.size.height,
-                        width: box.size.width * geometry.size.width,
-                        height: box.size.height * geometry.size.height
-                    )
+                    let rect = aspectFillRect(box, in: geometry.size)
                     
                     Rectangle()
                         .path(in: rect)
@@ -74,7 +67,7 @@ struct LiveView: View {
                                     .offset(y: -25)
                                 Spacer()
                             }
-                            .frame(width: rect.width, height: rect.height)
+                            .frame(width: max(rect.width, 10), height: max(rect.height, 10))
                             .position(x: rect.midX, y: rect.midY)
                         )
                 }
@@ -355,6 +348,37 @@ struct LiveView: View {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = LiveView.sharedCIContext.createCGImage(ciImage, from: ciImage.extent) else { return nil }
         return UIImage(cgImage: cgImage)
+    }
+    
+    private func aspectFillPoint(_ normPt: CGPoint, in size: CGSize) -> CGPoint {
+        guard size.width > 0 && size.height > 0 else { return .zero }
+        let cameraAspect: CGFloat = 16.0 / 9.0 // 1080p / 1920x1080 portrait aspect ratio
+        let viewAspect = size.height / size.width
+        
+        if viewAspect > cameraAspect {
+            let renderedWidth = size.height / cameraAspect
+            let offsetX = (renderedWidth - size.width) / 2.0
+            let x = normPt.x * renderedWidth - offsetX
+            let y = normPt.y * size.height
+            return CGPoint(x: x, y: y)
+        } else {
+            let renderedHeight = size.width * cameraAspect
+            let offsetY = (renderedHeight - size.height) / 2.0
+            let x = normPt.x * size.width
+            let y = normPt.y * renderedHeight - offsetY
+            return CGPoint(x: x, y: y)
+        }
+    }
+    
+    private func aspectFillRect(_ normRect: CGRect, in size: CGSize) -> CGRect {
+        let topLeft = aspectFillPoint(normRect.origin, in: size)
+        let bottomRight = aspectFillPoint(CGPoint(x: normRect.maxX, y: normRect.maxY), in: size)
+        return CGRect(
+            x: topLeft.x,
+            y: topLeft.y,
+            width: bottomRight.x - topLeft.x,
+            height: bottomRight.y - topLeft.y
+        )
     }
 }
 
