@@ -49,7 +49,7 @@ final class CardSlowMoSlicer: ObservableObject {
     /// Processes incoming 240 FPS frame with white card ratio and confidence
     func processFrame(_ image: UIImage, whitePaperRatio: Float, confidence: Float = 0.80) {
         let now = Date()
-        let isValidCardPresence = whitePaperRatio >= 0.12 && confidence >= 0.75
+        let isValidCardPresence = whitePaperRatio >= 0.08 || confidence >= 0.50
         
         if isValidCardPresence {
             consecutiveFrameCount += 1
@@ -62,8 +62,8 @@ final class CardSlowMoSlicer: ObservableObject {
                 activeFrames.removeFirst()
             }
             
-            // Requires 8 consecutive frames (~33ms) to confirm active card presence
-            if consecutiveFrameCount >= 8 {
+            // Requires 3 consecutive frames (~12ms) to confirm active card presence
+            if consecutiveFrameCount >= 3 {
                 isCardActive = true
             }
         } else {
@@ -71,13 +71,13 @@ final class CardSlowMoSlicer: ObservableObject {
             if isCardActive {
                 absentFrameCount += 1
                 
-                // Requires 10 consecutive absent frames (~40ms departure) to finalize card deal
-                if absentFrameCount >= 10 {
+                // Requires 4 consecutive absent frames (~16ms departure) to finalize card deal
+                if absentFrameCount >= 4 {
                     isCardActive = false
                     absentFrameCount = 0
                     
-                    // Cooldown check: At least 0.8 seconds (800ms) between deal emissions
-                    if now.timeIntervalSince(lastEmitTime) >= 0.8 {
+                    // Cooldown check: At least 0.4 seconds (400ms) between deal emissions
+                    if now.timeIntervalSince(lastEmitTime) >= 0.4 {
                         lastEmitTime = now
                         if !activeFrames.isEmpty {
                             let sharpestImage = findSharpestFrame(in: activeFrames) ?? image

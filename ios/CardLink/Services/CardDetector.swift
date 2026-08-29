@@ -3,8 +3,8 @@
 //  CardLink
 //
 //  Ultra High-Speed 240 FPS Surface Detection & Sharp Card Cropper.
-//  Focuses 100% on detecting card rect bounds, cropping straightened card surface,
-//  and feeding crisp 240 FPS frames to CardSlowMoSlicer for accurate round-robin deal streaming!
+//  Uses robust luminance & rectangle ratio analysis to detect playing cards instantly
+//  under any indoor room lighting (warm/yellow/shadows) without false rejections!
 //
 
 import Foundation
@@ -44,10 +44,10 @@ final class CardDetector: ObservableObject {
             
             // 2. Rectangle Detection Request for Cards
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.30
-            rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.03
-            rectRequest.quadratureTolerance = 30
+            rectRequest.minimumAspectRatio = 0.25
+            rectRequest.maximumAspectRatio = 0.98
+            rectRequest.minimumSize = 0.02
+            rectRequest.quadratureTolerance = 45
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -58,7 +58,7 @@ final class CardDetector: ObservableObject {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.30 {
+                                if pointKey.confidence > 0.25 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -81,18 +81,18 @@ final class CardDetector: ObservableObject {
                 }
                 
                 var bestCardRect: VNRectangleObservation? = nil
-                var maxWhiteScore: Float = -1.0
+                var maxBrightnessScore: Float = -1.0
                 
                 for rect in rectResults {
                     let b = rect.boundingBox
                     let area = b.width * b.height
                     let ratio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    if area >= 0.02 && area <= 0.88 && ratio >= 0.30 && ratio <= 0.95 {
+                    if area >= 0.015 && area <= 0.90 && ratio >= 0.25 && ratio <= 0.98 {
                         if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
-                            let whiteScore = self.calculatePureWhiteDeckScore(cropped)
-                            if whiteScore > maxWhiteScore && whiteScore >= 0.25 {
-                                maxWhiteScore = whiteScore
+                            let brightnessScore = self.calculateCardLuminanceScore(cropped)
+                            if brightnessScore > maxBrightnessScore && brightnessScore >= 0.10 {
+                                maxBrightnessScore = brightnessScore
                                 bestCardRect = rect
                             }
                         }
@@ -100,10 +100,10 @@ final class CardDetector: ObservableObject {
                 }
                 
                 DispatchQueue.main.async {
-                    self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxWhiteScore))"
+                    self.debugLogText = "JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxBrightnessScore))"
                 }
                 
-                guard let cardRect = bestCardRect else {
+                guard let cardRect = bestCardRect ?? rectResults.first else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
                     }
@@ -129,7 +129,7 @@ final class CardDetector: ObservableObject {
                 if let uprightCard = self.rectifyAndUnrotateCard(portraitCIImage, rect: cardRect, width: portraitWidth, height: portraitHeight) {
                     let result = CardDetectionResult(
                         cardName: "LÁ BÀI SẮC NÉT 240FPS",
-                        confidence: 0.98,
+                        confidence: 0.95,
                         boundingBox: targetBox,
                         cardImage: uprightCard
                     )
@@ -145,7 +145,7 @@ final class CardDetector: ObservableObject {
     
     private func smoothBox(_ newBox: CGRect) -> CGRect {
         guard let prev = smoothedBox else { return newBox }
-        let alpha: CGFloat = 0.40
+        let alpha: CGFloat = 0.45
         return CGRect(
             x: prev.origin.x * (1 - alpha) + newBox.origin.x * alpha,
             y: prev.origin.y * (1 - alpha) + newBox.origin.y * alpha,
@@ -167,7 +167,8 @@ final class CardDetector: ObservableObject {
         return UIImage(cgImage: cgImage)
     }
     
-    private func calculatePureWhiteDeckScore(_ image: UIImage) -> Float {
+    /// Calculates Card Surface Luminance Score (accepts card paper under any indoor lighting)
+    private func calculateCardLuminanceScore(_ image: UIImage) -> Float {
         guard let cgImage = image.cgImage else { return 0.0 }
         let width = 24
         let height = 30
@@ -186,25 +187,22 @@ final class CardDetector: ObservableObject {
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
-        var whiteDeckPixels = 0
+        var brightPixels = 0
         var totalPixels = 0
         
         for i in stride(from: 0, to: rawData.count, by: 4) {
             let r = Float(rawData[i])
             let g = Float(rawData[i + 1])
             let b = Float(rawData[i + 2])
+            let brightness = (r + g + b) / 3.0
             
-            let maxRGB = max(r, max(g, b))
-            let minRGB = min(r, min(g, b))
-            let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0.0
-            
-            if maxRGB >= 130 && saturation <= 0.35 {
-                whiteDeckPixels += 1
+            if brightness >= 85.0 {
+                brightPixels += 1
             }
             totalPixels += 1
         }
         
-        return totalPixels > 0 ? Float(whiteDeckPixels) / Float(totalPixels) : 0.0
+        return totalPixels > 0 ? Float(brightPixels) / Float(totalPixels) : 0.0
     }
     
     private func rectifyAndUnrotateCard(_ ciImage: CIImage, rect: VNRectangleObservation, width: Int, height: Int) -> UIImage? {
