@@ -2,9 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra High-Speed 240 FPS Multi-Angle Rotated Playing Card Detector.
-//  Detects playing cards held at ANY angle / rotation (horizontal, vertical, diagonal, tilted).
-//  Includes Real-Time Bounding Box Overlay for UI visualization.
+//  Ultra High-Speed 240 FPS Partial-Occlusion & Multi-Angle Playing Card Detector.
+//  Supports cards partially covered by fingers (20% - 50% occluded), cards being slid off deck,
+//  and cards held at ANY angle / rotation (horizontal, vertical, diagonal, tilted).
 //
 
 import Foundation
@@ -25,7 +25,7 @@ final class CardDetector: ObservableObject {
     @Published var lastDetectedCard: String?
     @Published var detectionBox: CGRect?
     @Published var handSkeletonPoints: [CGPoint] = []
-    @Published var debugLogText: String = "SEARCHING FOR CARDS AT ANY ANGLE..."
+    @Published var debugLogText: String = "SEARCHING FOR CARDS..."
     
     static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var smoothedBox: CGRect?
@@ -42,13 +42,13 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Multi-Angle Cards (Rotated / Tilted / Skewed)
+            // 2. Rectangle Detection Request for Partial & Rotated Cards
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.30
-            rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.020
+            rectRequest.minimumAspectRatio = 0.25
+            rectRequest.maximumAspectRatio = 0.98
+            rectRequest.minimumSize = 0.015 // Allows partially exposed cards (down to 1.5% of frame)
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 45 // 45° quadrature tolerance for rotated/tilted cards
+            rectRequest.quadratureTolerance = 45 // 45° quadrature tolerance for angled/occluded cards
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -96,10 +96,10 @@ final class CardDetector: ObservableObject {
                     let area = b.width * b.height
                     let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    // MULTI-ANGLE CARD FILTER (Supports Vertical, Horizontal 90°, Diagonal 45°, Slanted):
-                    // Standard playing card ratio (short side / long side) is ~0.60..0.75.
-                    // Fits cards in hand (area 2%..45%) held at ANY rotation angle!
-                    if area >= 0.020 && area <= 0.45 && cardRatio >= 0.35 && cardRatio <= 0.90 {
+                    // PARTIAL OCCLUSION & MULTI-ANGLE CARD FILTER:
+                    // Supports cards partially covered by fingers (20% - 50% occluded), slid off deck, or rotated.
+                    // Fits exposed card regions (area 1.5%..55%) with aspect ratio 0.25..1.25
+                    if area >= 0.015 && area <= 0.55 && cardRatio >= 0.25 && cardRatio <= 1.25 {
                         
                         let isHandTouching = !extractedJoints.isEmpty ? self.isHandTouchingCardRectTight(cardBox: cardBoxNormalized, handJoints: extractedJoints) : true
                         
@@ -119,7 +119,8 @@ final class CardDetector: ObservableObject {
                                         combinedScore += 0.5
                                     }
                                     
-                                    if whitePaperScore >= 0.10 && combinedScore > maxScore {
+                                    // Partial paper score threshold (>= 0.08) for occluded cards
+                                    if whitePaperScore >= 0.08 && combinedScore > maxScore {
                                         maxScore = combinedScore
                                         bestCardRect = rect
                                     }
@@ -131,9 +132,9 @@ final class CardDetector: ObservableObject {
                 
                 DispatchQueue.main.async {
                     if let _ = bestCardRect {
-                        self.debugLogText = "🎴 MULTI-ANGLE CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
+                        self.debugLogText = "🎴 CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
                     } else {
-                        self.debugLogText = "SEARCHING FOR CARDS AT ANY ANGLE..."
+                        self.debugLogText = "SEARCHING FOR CARDS..."
                     }
                 }
                 
