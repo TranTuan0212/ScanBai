@@ -33,14 +33,7 @@ export default function App() {
             </ProtectedLayout>
           }
         />
-        <Route
-          path="/viewer"
-          element={
-            <ProtectedLayout>
-              <LiveViewer />
-            </ProtectedLayout>
-          }
-        />
+        <Route path="/viewer" element={<LiveViewer />} />
         <Route
           path="/users"
           element={

@@ -299,8 +299,10 @@ struct LiveView: View {
     
     private func startLiveSession() {
         cardSlicer.reset()
-        let token = APIService.shared.getAuthToken() ?? ""
-        socketManager.connect(token: token)
+        if !socketManager.isConnected {
+            let token = APIService.shared.getAuthToken() ?? ""
+            socketManager.connect(token: token)
+        }
         socketManager.joinRoom(sessionId: self.sessionId)
         
         APIService.shared.startLiveSession { result in
