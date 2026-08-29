@@ -3,8 +3,8 @@
 //  CardLink
 //
 //  Ultra High-Speed 240 FPS Motion-Blur Resilient Card & Hand Detector.
-//  Optimized for fast-flicking card motion gestures. Uses expanded Hand Touch Margin (30%)
-//  and motion-blur resilient white paper threshold (>= 0.15) when hand is present.
+//  Includes Human Skin Tone Rejection (Chống chụp nhầm da tay / cổ tay)
+//  and Perspective Rectification for 100% genuine playing card extraction.
 //
 
 import Foundation
@@ -42,13 +42,13 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Cards (Fast Motion Optimized)
+            // 2. Rectangle Detection Request for Cards (Fast Motion & Skin Filtered)
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.35
-            rectRequest.maximumAspectRatio = 0.98
-            rectRequest.minimumSize = 0.02
+            rectRequest.minimumAspectRatio = 0.40
+            rectRequest.maximumAspectRatio = 0.95
+            rectRequest.minimumSize = 0.025
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 45
+            rectRequest.quadratureTolerance = 30
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -106,19 +106,20 @@ final class CardDetector: ObservableObject {
                     let area = b.width * b.height
                     let ratio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    if area >= 0.010 && area <= 0.85 && ratio >= 0.35 && ratio <= 0.98 {
-                        
-                        // Fast Motion Rule: Check if hand touches card (with 30% margin for fast flicking fingers)
+                    // Card Rect Size & Aspect Ratio Filter
+                    if area >= 0.025 && area <= 0.75 && ratio >= 0.40 && ratio <= 0.95 {
                         let isHandTouchingCard = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
                         
                         if isHandTouchingCard {
                             if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
-                                let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
                                 
-                                // Motion-blur resilient white paper threshold (>= 0.15 when hand is present)
-                                if whitePaperScore >= 0.15 && whitePaperScore > maxCardWhiteScore {
-                                    maxCardWhiteScore = whitePaperScore
-                                    bestCardRect = rect
+                                // REJECT SKIN CROPS: Ignore rectangle if it is human finger / wrist skin!
+                                if !self.isHumanSkinTone(cropped) {
+                                    let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
+                                    if whitePaperScore >= 0.15 && whitePaperScore > maxCardWhiteScore {
+                                        maxCardWhiteScore = whitePaperScore
+                                        bestCardRect = rect
+                                    }
                                 }
                             }
                         }
@@ -126,7 +127,7 @@ final class CardDetector: ObservableObject {
                 }
                 
                 DispatchQueue.main.async {
-                    self.debugLogText = "HAND JOINTS:\(extractedJoints.count) | FAST MOTION SCORE:\(String(format: "%.2f", maxCardWhiteScore))"
+                    self.debugLogText = "JOINTS:\(extractedJoints.count) | CARD SCORE:\(String(format: "%.2f", maxCardWhiteScore))"
                 }
                 
                 guard let cardRect = bestCardRect else {
@@ -170,10 +171,8 @@ final class CardDetector: ObservableObject {
     }
     
     /// Checks if any human hand joint physically touches / overlaps the card rectangle
-    /// Expanded margin (30%) for fast-flicking fingers during motion blur
     private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        let expandedBox = cardBox.insetBy(dx: -0.30 * cardBox.width, dy: -0.30 * cardBox.height)
-        
+        let expandedBox = cardBox.insetBy(dx: -0.25 * cardBox.width, dy: -0.25 * cardBox.height)
         for joint in handJoints {
             if expandedBox.contains(joint) {
                 return true
@@ -204,6 +203,48 @@ final class CardDetector: ObservableObject {
         let croppedCI = ciImage.cropped(to: cropRect)
         guard let cgImage = CardDetector.ciContext.createCGImage(croppedCI, from: croppedCI.extent) else { return nil }
         return UIImage(cgImage: cgImage)
+    }
+    
+    /// Detects if the cropped image is predominantly human skin tone (finger, wrist, palm)
+    private func isHumanSkinTone(_ image: UIImage) -> Bool {
+        guard let cgImage = image.cgImage else { return false }
+        let width = 32
+        let height = 40
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var rawData = [UInt8](repeating: 0, count: width * height * 4)
+        
+        guard let context = CGContext(
+            data: &rawData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        var skinPixels = 0
+        var totalPixels = 0
+        
+        for i in stride(from: 0, to: rawData.count, by: 4) {
+            let r = Float(rawData[i])
+            let g = Float(rawData[i + 1])
+            let b = Float(rawData[i + 2])
+            
+            // Standard Human Skin Tone RGB heuristic:
+            // R > 95, G > 40, B > 20, max(R,G,B) - min(R,G,B) > 15, |R - G| > 15, R > G, R > B
+            let maxRGB = max(r, max(g, b))
+            let minRGB = min(r, min(g, b))
+            if r > 95 && g > 40 && b > 20 && (maxRGB - minRGB) > 15 && abs(r - g) > 15 && r > g && r > b {
+                skinPixels += 1
+            }
+            totalPixels += 1
+        }
+        
+        let skinRatio = totalPixels > 0 ? Float(skinPixels) / Float(totalPixels) : 0.0
+        return skinRatio >= 0.55 // If >= 55% of the crop is human skin, reject!
     }
     
     /// Calculates Pure Playing Card White Paper Score
@@ -266,6 +307,14 @@ final class CardDetector: ObservableObject {
         guard let correctedImage = perspectiveFilter.outputImage else { return nil }
         guard let cgImage = CardDetector.ciContext.createCGImage(correctedImage, from: correctedImage.extent) else { return nil }
         
-        return UIImage(cgImage: cgImage)
+        let croppedCard = UIImage(cgImage: cgImage)
+        
+        // REJECT SKIN CROPS: If crop is human finger/wrist skin tone, return nil!
+        if isHumanSkinTone(croppedCard) {
+            print("🛑 [iOS CardDetector] Rejected crop because it is human skin tone (finger/wrist)")
+            return nil
+        }
+        
+        return croppedCard
     }
 }
