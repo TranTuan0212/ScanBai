@@ -1,0 +1,234 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110100012C12345600000001 /* CardLinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100012C12345600000000 /* CardLinkApp.swift */; };
+		110100022C12345600000001 /* CameraManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100022C12345600000000 /* CameraManager.swift */; };
+		110100032C12345600000001 /* CardDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100032C12345600000000 /* CardDetector.swift */; };
+		110100042C12345600000001 /* CardSlowMoSlicer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100042C12345600000000 /* CardSlowMoSlicer.swift */; };
+		110100052C12345600000001 /* SocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100052C12345600000000 /* SocketManager.swift */; };
+		110100062C12345600000001 /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100062C12345600000000 /* APIService.swift */; };
+		110100072C12345600000001 /* LiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100072C12345600000000 /* LiveView.swift */; };
+		110100082C12345600000001 /* FakeLockScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100082C12345600000000 /* FakeLockScreenView.swift */; };
+		110100092C12345600000001 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100092C12345600000000 /* LoginView.swift */; };
+		1101000A2C12345600000001 /* SessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101000A2C12345600000000 /* SessionPickerView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		110100002C12345600000000 /* CardLink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CardLink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		110100012C12345600000000 /* CardLinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardLinkApp.swift; sourceTree = "<group>"; };
+		110100022C12345600000000 /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CameraManager.swift; sourceTree = "<group>"; };
+		110100032C12345600000000 /* CardDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CardDetector.swift; sourceTree = "<group>"; };
+		110100042C12345600000000 /* CardSlowMoSlicer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/CardSlowMoSlicer.swift; sourceTree = "<group>"; };
+		110100052C12345600000000 /* SocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SocketManager.swift; sourceTree = "<group>"; };
+		110100062C12345600000000 /* APIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/APIService.swift; sourceTree = "<group>"; };
+		110100072C12345600000000 /* LiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/LiveView.swift; sourceTree = "<group>"; };
+		110100082C12345600000000 /* FakeLockScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/FakeLockScreenView.swift; sourceTree = "<group>"; };
+		110100092C12345600000000 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/LoginView.swift; sourceTree = "<group>"; };
+		1101000A2C12345600000000 /* SessionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/SessionPickerView.swift; sourceTree = "<group>"; };
+		1101000B2C12345600000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1101000C2C12345600000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1101000D2C12345600000000 = {
+			isa = PBXGroup;
+			children = (
+				110100012C12345600000000 /* CardLinkApp.swift */,
+				110100022C12345600000000 /* CameraManager.swift */,
+				110100032C12345600000000 /* CardDetector.swift */,
+				110100042C12345600000000 /* CardSlowMoSlicer.swift */,
+				110100052C12345600000000 /* SocketManager.swift */,
+				110100062C12345600000000 /* APIService.swift */,
+				110100072C12345600000000 /* LiveView.swift */,
+				110100082C12345600000000 /* FakeLockScreenView.swift */,
+				110100092C12345600000000 /* LoginView.swift */,
+				1101000A2C12345600000000 /* SessionPickerView.swift */,
+				1101000B2C12345600000000 /* Info.plist */,
+				110100002C12345600000000 /* CardLink.app */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1101000E2C12345600000000 /* CardLink */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 110100112C12345600000000 /* Build configuration list for PBXNativeTarget "CardLink" */;
+			buildPhases = (
+				1101000F2C12345600000000 /* Sources */,
+				1101000C2C12345600000000 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CardLink;
+			productName = CardLink;
+			productReference = 110100002C12345600000000 /* CardLink.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		110100102C12345600000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					1101000E2C12345600000000 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = 110100142C12345600000000 /* Build configuration list for PBXProject "CardLink" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = vi;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				vi,
+			);
+			mainGroup = 1101000D2C12345600000000;
+			productRefGroup = 1101000D2C12345600000000;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1101000E2C12345600000000 /* CardLink */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1101000F2C12345600000000 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110100012C12345600000001 /* CardLinkApp.swift in Sources */,
+				110100022C12345600000001 /* CameraManager.swift in Sources */,
+				110100032C12345600000001 /* CardDetector.swift in Sources */,
+				110100042C12345600000001 /* CardSlowMoSlicer.swift in Sources */,
+				110100052C12345600000001 /* SocketManager.swift in Sources */,
+				110100062C12345600000001 /* APIService.swift in Sources */,
+				110100072C12345600000001 /* LiveView.swift in Sources */,
+				110100082C12345600000001 /* FakeLockScreenView.swift in Sources */,
+				110100092C12345600000001 /* LoginView.swift in Sources */,
+				1101000A2C12345600000001 /* SessionPickerView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		110100122C12345600000000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cardlink.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_TARGETS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		110100132C12345600000000 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cardlink.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_TARGETS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		110100152C12345600000000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				SDKROOT = iphoneos;
+			};
+			name = Debug;
+		};
+		110100162C12345600000000 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				SDKROOT = iphoneos;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		110100112C12345600000000 /* Build configuration list for PBXNativeTarget "CardLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110100122C12345600000000 /* Debug */,
+				110100132C12345600000000 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		110100142C12345600000000 /* Build configuration list for PBXProject "CardLink" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				110100152C12345600000000 /* Debug */,
+				110100162C12345600000000 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 110100102C12345600000000 /* Project object */;
+}

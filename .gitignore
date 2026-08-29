@@ -1,0 +1,31 @@
+# Large Datasets & Video Artifacts
+dataset/
+Image/*.mp4
+*.zip
+*.h5
+*.keras
+card_detections/
+
+# Gradle & Android Build Artifacts
+.gradle/
+build/
+app/build/
+*.apk
+*.keystore
+
+# Node.js & Backend
+node_modules/
+backend/node_modules/
+backend/dist/
+backend/.env
+
+# Local & IDE
+.idea/
+.kotlin/
+local.properties
+*.iml
+.DS_Store
+
+# Temporary brain & system generated logs
+.system_generated/
+scratch/

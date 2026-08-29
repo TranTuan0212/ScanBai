@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  password    String
+  role        String    @default("view") // "live", "view", "admin"
+  expiredAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  sessions    Session[]
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  deviceId       String
+  streamId       String    @unique
+  lockToken      String    @unique
+  rounds         Int       @default(3)
+  cardStack      String    @default("[]") // JSON string: [["A♠"], ["K♥"], []]
+  cardCount      Int       @default(0)
+  status         String    @default("active") // "active", "ended"
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([userId, status])
+}

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">CardLink</string>
+    <string name="notification_channel_name">CardLink Live Broadcast</string>
+    <string name="notification_channel_desc">Duy trì phiên phát sóng trực tiếp và nhận diện lá bài dưới nền</string>
+    <string name="notification_title">Đang phát trực tiếp CardLink</string>
+    <string name="notification_text">Phiên live đang hoạt động. Chạm để mở ứng dụng.</string>
+</resources>

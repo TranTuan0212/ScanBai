@@ -1,0 +1,36 @@
+workflows:
+  ios-cardlink-ipa:
+    name: Build iOS CardLink IPA
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    environment:
+      xcode: latest
+    scripts:
+      - name: Build iOS App and Package IPA
+        script: |
+          set -e
+          cd ios/CardLink
+          
+          # Clean build output directory
+          rm -rf build
+          mkdir -p build/Payload
+          
+          # Build App executable bundle with xcodebuild
+          xcodebuild -project CardLink.xcodeproj \
+            -scheme CardLink \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build
+            
+          # Copy compiled CardLink.app into Payload and package IPA
+          cp -r build/DerivedData/Build/Products/Release-iphoneos/CardLink.app build/Payload/
+          cd build
+          zip -r CardLink_Broadcast_v1.0.ipa Payload
+          ls -lh CardLink_Broadcast_v1.0.ipa
+    artifacts:
+      - ios/CardLink/build/*.ipa
