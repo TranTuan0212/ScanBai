@@ -237,11 +237,12 @@ struct LiveView: View {
                         self.latestUIImage = uiImage
                     }
                     
-                    // 1. Stream live video frame to Backend downsampled to 20 FPS (~50ms) to save bandwidth
+                    // 1. Stream live video frame to Backend downsampled to 10 FPS (~100ms) with lightweight 360p compression (12KB)
                     let now = Date().timeIntervalSince1970
-                    if self.isLiveActive && (now - self.lastProcessedTime >= 0.050) {
+                    if self.isLiveActive && (now - self.lastProcessedTime >= 0.100) {
                         self.lastProcessedTime = now
-                        if let jpegData = uiImage.jpegData(compressionQuality: 0.25) {
+                        let resized = self.resizeImageForStream(uiImage, targetWidth: 360)
+                        if let jpegData = resized.jpegData(compressionQuality: 0.20) {
                             let base64String = jpegData.base64EncodedString()
                             let dataUri = "data:image/jpeg;base64,\(base64String)"
                             self.socketManager.sendLiveFrame(sessionId: self.sessionId, dataUri: dataUri)
@@ -372,6 +373,19 @@ struct LiveView: View {
             width: bottomRight.x - topLeft.x,
             height: bottomRight.y - topLeft.y
         )
+    }
+    
+    private func resizeImageForStream(_ image: UIImage, targetWidth: CGFloat = 360) -> UIImage {
+        let size = image.size
+        guard size.width > targetWidth else { return image }
+        let scale = targetWidth / size.width
+        let targetHeight = size.height * scale
+        let targetSize = CGSize(width: targetWidth, height: targetHeight)
+        
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
     }
 }
 

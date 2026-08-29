@@ -231,6 +231,38 @@ export default function LiveViewer() {
 
     socket.on('live_frame', (frame) => {
       setLiveFrame(frame);
+      setSelectedSession((prev) => {
+        if (!prev) {
+          return {
+            sessionId: 'active_live_stream',
+            broadcasterEmail: 'iPhone Broadcaster (Trực Tiếp)',
+            rounds: 3
+          };
+        }
+        return prev;
+      });
+    });
+
+    socket.on('card_detected', (data) => {
+      const { label, imageBase64 } = data || {};
+      if (label || imageBase64) {
+        const newCard = {
+          label: label || 'LÁ BÀI SẮC NÉT',
+          image: imageBase64 ? (imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`) : null
+        };
+        setCardStack((prev) => {
+          const next = [...prev];
+          if (next.length === 0) next.push([]);
+          const currentCol = next[next.length - 1];
+          if (currentCol.length >= 3) {
+            next.push([newCard]);
+          } else {
+            currentCol.push(newCard);
+          }
+          return next;
+        });
+        setLastDetectedCard(parseCard(newCard));
+      }
     });
 
     socket.on('card_state', (newStack) => {
