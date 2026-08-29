@@ -32,6 +32,10 @@ final class iOSSocketManager: ObservableObject {
         DeviceUtils.saveServerIP(ip)
     }
     
+    func setServerIP(_ ip: String) {
+        updateServerIP(ip)
+    }
+    
     func connect(token: String = "") {
         if !token.isEmpty {
             self.currentToken = token
