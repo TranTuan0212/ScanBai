@@ -433,6 +433,23 @@ final class CameraPreviewUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer?.frame = bounds
+        updatePreviewOrientation()
+    }
+    
+    private func updatePreviewOrientation() {
+        guard let connection = previewLayer?.connection, connection.isVideoOrientationSupported else { return }
+        if let windowScene = window?.windowScene {
+            switch windowScene.interfaceOrientation {
+            case .landscapeLeft:
+                connection.videoOrientation = .landscapeLeft
+            case .landscapeRight:
+                connection.videoOrientation = .landscapeRight
+            case .portraitUpsideDown:
+                connection.videoOrientation = .portraitUpsideDown
+            default:
+                connection.videoOrientation = .portrait
+            }
+        }
     }
     
     func setupPreviewLayer(session: AVCaptureSession) {
@@ -441,6 +458,7 @@ final class CameraPreviewUIView: UIView {
         layer.frame = bounds
         self.layer.addSublayer(layer)
         self.previewLayer = layer
+        updatePreviewOrientation()
     }
     
     func updateSession(session: AVCaptureSession) {
