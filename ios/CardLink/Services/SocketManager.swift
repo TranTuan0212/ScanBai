@@ -24,7 +24,7 @@ final class iOSSocketManager: ObservableObject {
     private var pendingSessionId: String?
     
     private init() {
-        self.serverIP = DeviceUtils.loadServerIP() ?? "192.168.1.6"
+        self.serverIP = DeviceUtils.getServerIP()
     }
     
     func updateServerIP(_ ip: String) {

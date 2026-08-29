@@ -31,6 +31,10 @@ struct DeviceUtils {
         return defaultIP
     }
     
+    static func loadServerIP() -> String? {
+        return UserDefaults.standard.string(forKey: serverIPKey)
+    }
+    
     /// Saves updated Server IP to UserDefaults.
     static func saveServerIP(_ ip: String) {
         let cleanIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
