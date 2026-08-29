@@ -179,15 +179,22 @@ struct LiveView: View {
                     }
                     
                     HStack(spacing: 20) {
-                        // Torch Button
+                        // Enhanced Flash / Torch Toggle Button ("ĐÈN FLASH")
                         Button(action: {
                             torchOn = cameraManager.toggleTorch()
                         }) {
-                            Image(systemName: torchOn ? "bolt.fill" : "bolt.slash.fill")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(torchOn ? .yellow : .white)
-                                .frame(width: 48, height: 48)
-                                .background(Circle().fill(Color.black.opacity(0.6)))
+                            HStack(spacing: 6) {
+                                Image(systemName: torchOn ? "bolt.fill" : "bolt.slash.fill")
+                                    .font(.system(size: 16, weight: .bold))
+                                Text(torchOn ? "TẮT FLASH" : "BẬT FLASH")
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            }
+                            .foregroundColor(torchOn ? .black : .yellow)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(torchOn ? Color.yellow : Color.black.opacity(0.70)))
+                            .overlay(Capsule().stroke(Color.yellow, lineWidth: 1.5))
+                            .shadow(color: torchOn ? .yellow.opacity(0.6) : .clear, radius: 8)
                         }
                         
                         // Switch Camera Button
