@@ -2,9 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra High-Speed 240 FPS Motion-Blur Resilient Card & Hand Detector.
-//  Uses Smart Dual-Detection: Combines Hand Skeleton tracking with playing card
-//  geometric & white paper verification for 100% reliable detection under any lighting.
+//  Ultra High-Speed 240 FPS Real Playing Card & Hand Detector.
+//  Includes Computer Screen & UI Modal Box Rejection (Chống bắt nhầm màn hình máy tính),
+//  Tight Hand-Touch Verification, and Corner Card Rank/Symbol Prioritization.
 //
 
 import Foundation
@@ -25,7 +25,7 @@ final class CardDetector: ObservableObject {
     @Published var lastDetectedCard: String?
     @Published var detectionBox: CGRect?
     @Published var handSkeletonPoints: [CGPoint] = []
-    @Published var debugLogText: String = "SEARCHING FOR CARDS..."
+    @Published var debugLogText: String = "SEARCHING FOR REAL PLAYING CARDS..."
     
     static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var smoothedBox: CGRect?
@@ -42,24 +42,24 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Cards
+            // 2. Rectangle Detection Request for Playing Cards
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.35
-            rectRequest.maximumAspectRatio = 0.98
-            rectRequest.minimumSize = 0.020
+            rectRequest.minimumAspectRatio = 0.40
+            rectRequest.maximumAspectRatio = 0.90
+            rectRequest.minimumSize = 0.030
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 35
+            rectRequest.quadratureTolerance = 25
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
                 
-                // Extract Hand Skeleton Joints (if available in current lighting)
+                // Extract Hand Skeleton Joints
                 var extractedJoints: [CGPoint] = []
                 if let handObservations = handPoseRequest.results as? [VNHumanHandPoseObservation], !handObservations.isEmpty {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.15 {
+                                if pointKey.confidence > 0.20 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -75,14 +75,14 @@ final class CardDetector: ObservableObject {
                 guard let rectResults = rectRequest.results as? [VNRectangleObservation], !rectResults.isEmpty else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
-                        self.debugLogText = "SEARCHING FOR CARDS... (NO RECT)"
+                        self.debugLogText = "SEARCHING... (NO CARD RECT)"
                     }
                     completion(nil)
                     return
                 }
                 
                 var bestCardRect: VNRectangleObservation? = nil
-                var maxCardWhiteScore: Float = -1.0
+                var maxScore: Float = -1.0
                 
                 for rect in rectResults {
                     let b = rect.boundingBox
@@ -94,13 +94,15 @@ final class CardDetector: ObservableObject {
                     )
                     
                     let area = b.width * b.height
-                    let ratio = min(b.width, b.height) / max(b.width, b.height)
+                    let isTall = b.height > b.width // Real playing cards in portrait are TALL (height > width)
+                    let aspectRatio = b.width / b.height
                     
-                    // Playing Card Size & Aspect Ratio Filter
-                    if area >= 0.020 && area <= 0.85 && ratio >= 0.35 && ratio <= 0.98 {
+                    // REJECT COMPUTER SCREEN MODALS & MONITORS:
+                    // 1. Computer UI modals are wide/landscape (width >= height). Real cards in portrait are TALL (aspectRatio 0.45..0.85).
+                    // 2. Computer UI modals cover > 40% of the screen. Real cards in hand cover 3%..35%.
+                    if isTall && area >= 0.025 && area <= 0.38 && aspectRatio >= 0.45 && aspectRatio <= 0.85 {
                         
-                        let hasHand = !extractedJoints.isEmpty
-                        let isHandTouching = hasHand ? self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints) : true
+                        let isHandTouching = !extractedJoints.isEmpty ? self.isHandTouchingCardRectTight(cardBox: cardBoxNormalized, handJoints: extractedJoints) : true
                         
                         if isHandTouching {
                             if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
@@ -108,10 +110,18 @@ final class CardDetector: ObservableObject {
                                 // REJECT SKIN CROPS: Ignore rectangle if it is human finger / wrist skin!
                                 if !self.isHumanSkinTone(cropped) {
                                     let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
+                                    let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                     
-                                    // Valid Playing Card Paper Score (>= 0.12)
-                                    if whitePaperScore >= 0.12 && whitePaperScore > maxCardWhiteScore {
-                                        maxCardWhiteScore = whitePaperScore
+                                    // Heavy bonus score for playing card corner rank symbol detection!
+                                    var combinedScore = whitePaperScore + (hasRankSymbol ? 1.5 : 0.0)
+                                    
+                                    // Preference for cards touched directly by hands in bottom half of screen
+                                    if cardBoxNormalized.origin.y > 0.30 {
+                                        combinedScore += 0.5
+                                    }
+                                    
+                                    if whitePaperScore >= 0.12 && combinedScore > maxScore {
+                                        maxScore = combinedScore
                                         bestCardRect = rect
                                     }
                                 }
@@ -122,9 +132,9 @@ final class CardDetector: ObservableObject {
                 
                 DispatchQueue.main.async {
                     if let _ = bestCardRect {
-                        self.debugLogText = "🎴 CARD DETECTED (SCORE:\(String(format: "%.2f", maxCardWhiteScore)))"
+                        self.debugLogText = "🎴 REAL CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
                     } else {
-                        self.debugLogText = "SEARCHING FOR CARDS..."
+                        self.debugLogText = "SEARCHING FOR CARDS IN HAND..."
                     }
                 }
                 
@@ -179,14 +189,49 @@ final class CardDetector: ObservableObject {
         }
     }
     
-    /// Checks if any human hand joint physically touches / overlaps the card rectangle
-    private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        let expandedBox = cardBox.insetBy(dx: -0.30 * cardBox.width, dy: -0.30 * cardBox.height)
+    /// Tight Hand Touch Verification: Checks if hand joints touch/overlap the card rectangle directly.
+    /// Eliminates false hand touches on background laptop screens.
+    private func isHandTouchingCardRectTight(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
+        let tightBox = cardBox.insetBy(dx: -0.10 * cardBox.width, dy: -0.10 * cardBox.height)
         for joint in handJoints {
-            if expandedBox.contains(joint) {
+            if tightBox.contains(joint) {
                 return true
             }
         }
+        return false
+    }
+    
+    /// Quick check for corner card rank symbols (2..10, J, Q, K, A)
+    private func containsCardRankSymbol(_ image: UIImage) -> Bool {
+        guard let cgImage = image.cgImage else { return false }
+        
+        // Crop top-left corner (25% width, 30% height) where rank & suit symbols are located
+        let cornerWidth = Int(CGFloat(cgImage.width) * 0.25)
+        let cornerHeight = Int(CGFloat(cgImage.height) * 0.30)
+        let cornerRect = CGRect(x: 0, y: 0, width: cornerWidth, height: cornerHeight)
+        
+        guard let cornerCG = cgImage.cropping(to: cornerRect) else { return false }
+        
+        let requestHandler = VNImageRequestHandler(cgImage: cornerCG, options: [:])
+        let textRequest = VNRecognizeTextRequest()
+        textRequest.recognitionLevel = .fast
+        
+        do {
+            try requestHandler.perform([textRequest])
+            if let results = textRequest.results as? [VNRecognizedTextObservation] {
+                for observation in results {
+                    if let candidate = observation.topCandidates(1).first {
+                        let text = candidate.string.uppercased()
+                        let cardRanks = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+                        for rank in cardRanks {
+                            if text.contains(rank) {
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {}
         return false
     }
     
@@ -243,7 +288,6 @@ final class CardDetector: ObservableObject {
             let g = Float(rawData[i + 1])
             let b = Float(rawData[i + 2])
             
-            // Standard Human Skin Tone RGB heuristic
             let maxRGB = max(r, max(g, b))
             let minRGB = min(r, min(g, b))
             if r > 95 && g > 40 && b > 20 && (maxRGB - minRGB) > 15 && abs(r - g) > 15 && r > g && r > b {
