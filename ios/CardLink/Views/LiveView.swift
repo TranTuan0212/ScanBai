@@ -395,20 +395,23 @@ struct LiveView: View {
     
     private func aspectFillPoint(_ normPt: CGPoint, in size: CGSize) -> CGPoint {
         guard size.width > 0 && size.height > 0 else { return .zero }
-        let cameraAspect: CGFloat = 16.0 / 9.0 // 1080p / 1920x1080 portrait aspect ratio
-        let viewAspect = size.height / size.width
+        
+        let isLandscape = size.width > size.height
+        // In landscape: 16:9 width-to-height (1.777). In portrait: 9:16 (0.5625)
+        let cameraAspect: CGFloat = isLandscape ? (16.0 / 9.0) : (9.0 / 16.0)
+        let viewAspect = size.width / size.height
         
         if viewAspect > cameraAspect {
-            let renderedWidth = size.height / cameraAspect
-            let offsetX = (renderedWidth - size.width) / 2.0
-            let x = normPt.x * renderedWidth - offsetX
-            let y = normPt.y * size.height
-            return CGPoint(x: x, y: y)
-        } else {
-            let renderedHeight = size.width * cameraAspect
+            let renderedHeight = size.width / cameraAspect
             let offsetY = (renderedHeight - size.height) / 2.0
             let x = normPt.x * size.width
             let y = normPt.y * renderedHeight - offsetY
+            return CGPoint(x: x, y: y)
+        } else {
+            let renderedWidth = size.height * cameraAspect
+            let offsetX = (renderedWidth - size.width) / 2.0
+            let x = normPt.x * renderedWidth - offsetX
+            let y = normPt.y * size.height
             return CGPoint(x: x, y: y)
         }
     }

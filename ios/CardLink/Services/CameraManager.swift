@@ -51,25 +51,41 @@ final class CameraManager: NSObject, ObservableObject {
     }
     
     func updateOrientation() {
-        let deviceOrientation = UIDevice.current.orientation
         var newVideoOrientation: AVCaptureVideoOrientation = .portrait
         var newCGOrientation: CGImagePropertyOrientation = .right
         
-        switch deviceOrientation {
-        case .landscapeLeft:
+        let deviceOrientation = UIDevice.current.orientation
+        
+        if deviceOrientation == .landscapeLeft {
             newVideoOrientation = .landscapeRight
             newCGOrientation = .up
-        case .landscapeRight:
+        } else if deviceOrientation == .landscapeRight {
             newVideoOrientation = .landscapeLeft
             newCGOrientation = .down
-        case .portraitUpsideDown:
+        } else if deviceOrientation == .portraitUpsideDown {
             newVideoOrientation = .portraitUpsideDown
             newCGOrientation = .left
-        case .portrait:
+        } else if deviceOrientation == .portrait {
             newVideoOrientation = .portrait
             newCGOrientation = .right
-        default:
-            return
+        } else {
+            // Fallback: If device is laying flat on a table (faceUp / faceDown), check UI window orientation!
+            if let windowScene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                switch windowScene.interfaceOrientation {
+                case .landscapeLeft:
+                    newVideoOrientation = .landscapeLeft
+                    newCGOrientation = .down
+                case .landscapeRight:
+                    newVideoOrientation = .landscapeRight
+                    newCGOrientation = .up
+                case .portraitUpsideDown:
+                    newVideoOrientation = .portraitUpsideDown
+                    newCGOrientation = .left
+                default:
+                    newVideoOrientation = .portrait
+                    newCGOrientation = .right
+                }
+            }
         }
         
         DispatchQueue.main.async {
