@@ -48,14 +48,32 @@ struct LiveView: View {
                 }
             }
             
-            // 3. Card Bounding Box Overlay (Clean Green Frame without AI tags)
+            // 3. Card Bounding Box Overlay (Bright Glowing Green Frame with Badge)
             if let box = cardDetector.detectionBox {
                 GeometryReader { geometry in
                     let rect = aspectFillRect(box, in: geometry.size)
                     
-                    Rectangle()
-                        .path(in: rect)
-                        .stroke(Color.green, lineWidth: 3.0)
+                    ZStack(alignment: .topLeading) {
+                        // Glowing Green Bounding Box Line
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.green, lineWidth: 3.5)
+                            .shadow(color: .green.opacity(0.8), radius: 6)
+                            .frame(width: rect.width, height: rect.height)
+                        
+                        // Card Detection Badge
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10))
+                            Text("LÁ BÀI 240FPS")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.green))
+                        .offset(x: 4, y: -22)
+                    }
+                    .position(x: rect.midX, y: rect.midY)
                 }
             }
             

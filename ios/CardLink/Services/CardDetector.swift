@@ -2,10 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra High-Speed 240 FPS Real Playing Card & Hand Detector.
-//  Optimized for Dark Rooms / Night Operation (Pitch Dark Adaptive Thresholding).
-//  Includes Computer Screen Rejection, Quadrature Angle Tolerance (45°),
-//  and Dynamic Adaptive Contrast Scoring.
+//  Ultra High-Speed 240 FPS Multi-Angle Rotated Playing Card Detector.
+//  Detects playing cards held at ANY angle / rotation (horizontal, vertical, diagonal, tilted).
+//  Includes Real-Time Bounding Box Overlay for UI visualization.
 //
 
 import Foundation
@@ -26,7 +25,7 @@ final class CardDetector: ObservableObject {
     @Published var lastDetectedCard: String?
     @Published var detectionBox: CGRect?
     @Published var handSkeletonPoints: [CGPoint] = []
-    @Published var debugLogText: String = "SEARCHING FOR REAL PLAYING CARDS..."
+    @Published var debugLogText: String = "SEARCHING FOR CARDS AT ANY ANGLE..."
     
     static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var smoothedBox: CGRect?
@@ -43,13 +42,13 @@ final class CardDetector: ObservableObject {
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. Rectangle Detection Request for Playing Cards (Optimized for Dark Rooms & Rotated Cards)
+            // 2. Rectangle Detection Request for Multi-Angle Cards (Rotated / Tilted / Skewed)
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.35
+            rectRequest.minimumAspectRatio = 0.30
             rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.015
+            rectRequest.minimumSize = 0.020
             rectRequest.maximumObservations = 5
-            rectRequest.quadratureTolerance = 45 // Supports rotated cards up to 45°
+            rectRequest.quadratureTolerance = 45 // 45° quadrature tolerance for rotated/tilted cards
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -95,10 +94,12 @@ final class CardDetector: ObservableObject {
                     )
                     
                     let area = b.width * b.height
-                    let aspectRatio = min(b.width, b.height) / max(b.width, b.height)
+                    let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                     
-                    // Playing Card Size & Aspect Ratio Filter (Adaptive for Dark Rooms)
-                    if area >= 0.015 && area <= 0.75 && aspectRatio >= 0.35 && aspectRatio <= 0.95 {
+                    // MULTI-ANGLE CARD FILTER (Supports Vertical, Horizontal 90°, Diagonal 45°, Slanted):
+                    // Standard playing card ratio (short side / long side) is ~0.60..0.75.
+                    // Fits cards in hand (area 2%..45%) held at ANY rotation angle!
+                    if area >= 0.020 && area <= 0.45 && cardRatio >= 0.35 && cardRatio <= 0.90 {
                         
                         let isHandTouching = !extractedJoints.isEmpty ? self.isHandTouchingCardRectTight(cardBox: cardBoxNormalized, handJoints: extractedJoints) : true
                         
@@ -113,12 +114,12 @@ final class CardDetector: ObservableObject {
                                     // Heavy bonus score for playing card corner rank symbol detection!
                                     var combinedScore = whitePaperScore + (hasRankSymbol ? 1.5 : 0.0)
                                     
+                                    // Preference for cards touched directly by hands in bottom half of screen
                                     if cardBoxNormalized.origin.y > 0.25 {
-                                        combinedScore += 0.3
+                                        combinedScore += 0.5
                                     }
                                     
-                                    // Dark Room Adaptive Score Threshold (>= 0.08)
-                                    if whitePaperScore >= 0.08 && combinedScore > maxScore {
+                                    if whitePaperScore >= 0.10 && combinedScore > maxScore {
                                         maxScore = combinedScore
                                         bestCardRect = rect
                                     }
@@ -130,9 +131,9 @@ final class CardDetector: ObservableObject {
                 
                 DispatchQueue.main.async {
                     if let _ = bestCardRect {
-                        self.debugLogText = "🎴 REAL CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
+                        self.debugLogText = "🎴 MULTI-ANGLE CARD DETECTED (SCORE:\(String(format: "%.2f", maxScore)))"
                     } else {
-                        self.debugLogText = "SEARCHING FOR CARDS IN HAND..."
+                        self.debugLogText = "SEARCHING FOR CARDS AT ANY ANGLE..."
                     }
                 }
                 
@@ -192,7 +193,7 @@ final class CardDetector: ObservableObject {
     
     /// Tight Hand Touch Verification: Checks if hand joints touch/overlap the card rectangle directly.
     private func isHandTouchingCardRectTight(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        let tightBox = cardBox.insetBy(dx: -0.10 * cardBox.width, dy: -0.10 * cardBox.height)
+        let tightBox = cardBox.insetBy(dx: -0.15 * cardBox.width, dy: -0.15 * cardBox.height)
         for joint in handJoints {
             if tightBox.contains(joint) {
                 return true
@@ -299,7 +300,7 @@ final class CardDetector: ObservableObject {
         return skinRatio >= 0.60
     }
     
-    /// Calculates Adaptive Playing Card Paper Score (Works 100% in pitch dark rooms)
+    /// Calculates Pure Playing Card White Paper Score
     private func calculatePlayingCardWhiteScore(_ image: UIImage) -> Float {
         guard let cgImage = image.cgImage else { return 0.0 }
         let width = 32
@@ -319,22 +320,9 @@ final class CardDetector: ObservableObject {
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
-        var totalBrightness: Double = 0.0
+        var whitePaperPixels = 0
         var totalPixels = 0
         
-        for i in stride(from: 0, to: rawData.count, by: 4) {
-            let r = Float(rawData[i])
-            let g = Float(rawData[i + 1])
-            let b = Float(rawData[i + 2])
-            let brightness = (r + g + b) / 3.0
-            totalBrightness += Double(brightness)
-            totalPixels += 1
-        }
-        
-        let meanBrightness = Float(totalBrightness / Double(max(1, totalPixels)))
-        let adaptiveMinBrightness = max(18.0, meanBrightness * 0.65)
-        
-        var paperPixels = 0
         for i in stride(from: 0, to: rawData.count, by: 4) {
             let r = Float(rawData[i])
             let g = Float(rawData[i + 1])
@@ -345,11 +333,12 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            if brightness >= adaptiveMinBrightness && saturation <= 0.60 {
-                paperPixels += 1
+            if brightness >= 75.0 && saturation <= 0.50 {
+                whitePaperPixels += 1
             }
+            totalPixels += 1
         }
         
-        return totalPixels > 0 ? Float(paperPixels) / Float(totalPixels) : 0.0
+        return totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
     }
 }
