@@ -124,12 +124,14 @@ final class CameraManager: NSObject, ObservableObject {
             if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
             }
+            
+            // 3. Enable Hardware Low-Light Auto-Boost for Dark Room Night Operation
             if device.isLowLightBoostSupported {
                 device.automaticallyEnablesLowLightBoostWhenAvailable = true
-                print("🌙 [iOS Camera] Hardware Low-Light Boost Enabled for Dark Rooms!")
+                print("💡 [iOS Camera] Hardware Low-Light Boost Auto-Enabled for Dark Rooms!")
             }
             
-            // 3. Enable Optical Image Stabilization (OIS) or Video Stabilization
+            // 4. Enable Optical Image Stabilization (OIS) or Video Stabilization
             if let connection = videoDataOutput.connection(with: .video) {
                 if connection.isVideoStabilizationSupported {
                     connection.preferredVideoStabilizationMode = .standard
