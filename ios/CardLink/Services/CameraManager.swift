@@ -2,8 +2,8 @@
 //  CameraManager.swift
 //  CardLink
 //
-//  AVCaptureSession manager configured for highest supported FPS (60/120 FPS) and 4K Ultra HD resolution.
-//  Continuous background camera capture sharing frames with Vision AI detector & Socket Live Streaming.
+//  AVCaptureSession manager configured for highest supported FPS (60/120/240 FPS) and 1080p Full HD resolution.
+//  Includes Real-Time Dynamic Device Orientation Rotation (Portrait, Landscape Left, Landscape Right).
 //
 
 import Foundation
@@ -16,6 +16,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var isTorchOn = false
     @Published var currentFPS: Double = 0.0
     @Published var activeResolution: String = "1080p"
+    @Published var currentVideoOrientation: AVCaptureVideoOrientation = .portrait
+    @Published var cgImageOrientation: CGImagePropertyOrientation = .right
     
     let captureSession = AVCaptureSession()
     private var videoDevice: AVCaptureDevice?
@@ -23,13 +25,67 @@ final class CameraManager: NSObject, ObservableObject {
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "com.cardlink.camera.sessionQueue", qos: .userInitiated)
     
-    var onFrameCaptured: ((CVPixelBuffer) -> Void)?
+    var onFrameCaptured: ((CVPixelBuffer, CGImagePropertyOrientation) -> Void)?
     
     override init() {
         super.init()
+        setupOrientationObserver()
     }
     
-    func setupAndStartSession(onFrame: @escaping (CVPixelBuffer) -> Void) {
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    /// Listen for physical iPhone rotation (Portrait, Landscape Left, Landscape Right)
+    private func setupOrientationObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOrientationChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleOrientationChange() {
+        updateOrientation()
+    }
+    
+    func updateOrientation() {
+        let deviceOrientation = UIDevice.current.orientation
+        var newVideoOrientation: AVCaptureVideoOrientation = .portrait
+        var newCGOrientation: CGImagePropertyOrientation = .right
+        
+        switch deviceOrientation {
+        case .landscapeLeft:
+            newVideoOrientation = .landscapeRight
+            newCGOrientation = .up
+        case .landscapeRight:
+            newVideoOrientation = .landscapeLeft
+            newCGOrientation = .down
+        case .portraitUpsideDown:
+            newVideoOrientation = .portraitUpsideDown
+            newCGOrientation = .left
+        case .portrait:
+            newVideoOrientation = .portrait
+            newCGOrientation = .right
+        default:
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.currentVideoOrientation = newVideoOrientation
+            self.cgImageOrientation = newCGOrientation
+        }
+        
+        sessionQueue.async { [weak self] in
+            guard let self = self, let connection = self.videoDataOutput.connection(with: .video) else { return }
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = newVideoOrientation
+            }
+        }
+    }
+    
+    func setupAndStartSession(onFrame: @escaping (CVPixelBuffer, CGImagePropertyOrientation) -> Void) {
         self.onFrameCaptured = onFrame
         
         sessionQueue.async { [weak self] in
@@ -38,6 +94,7 @@ final class CameraManager: NSObject, ObservableObject {
             self.captureSession.startRunning()
             DispatchQueue.main.async {
                 self.isRunning = self.captureSession.isRunning
+                self.updateOrientation()
             }
         }
     }
@@ -83,7 +140,7 @@ final class CameraManager: NSObject, ObservableObject {
             captureSession.addOutput(videoDataOutput)
         }
         
-        // AUTO HARDWARE ACCELERATION & HIGHEST FPS DISCOVERY (60/120 FPS)
+        // AUTO HARDWARE ACCELERATION & HIGHEST FPS DISCOVERY (60/120/240 FPS)
         configureHighestFPSAndStabilization(for: device)
     }
     
@@ -91,7 +148,6 @@ final class CameraManager: NSObject, ObservableObject {
         do {
             try device.lockForConfiguration()
             
-            // 1. Find Highest Available Frame Rate Format (60 FPS, 120 FPS, 240 FPS)
             var bestFormat: AVCaptureDevice.Format?
             var maxFPS: Double = 0
             
@@ -110,11 +166,10 @@ final class CameraManager: NSObject, ObservableObject {
                 device.activeVideoMinFrameDuration = targetFrameDuration
                 device.activeVideoMaxFrameDuration = targetFrameDuration
                 
-                print("🚀 [iOS Camera] LOCKED AT MAXIMUM \(Int(maxFPS)) FPS (ULTRA HIGH-SPEED MOTION CAPTURE)")
+                print("🚀 [iOS Camera] LOCKED AT MAXIMUM \(Int(maxFPS)) FPS")
                 DispatchQueue.main.async { self.currentFPS = maxFPS }
             }
             
-            // 2. Enable Auto-Focus, Auto-Exposure & Continuous White Balance
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
             }
@@ -125,17 +180,12 @@ final class CameraManager: NSObject, ObservableObject {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
             }
             
-            // 3. Enable Hardware Low-Light Auto-Boost for Dark Room Night Operation
-            if device.isLowLightBoostSupported {
-                device.automaticallyEnablesLowLightBoostWhenAvailable = true
-                print("💡 [iOS Camera] Hardware Low-Light Boost Auto-Enabled for Dark Rooms!")
-            }
-            
-            // 4. Enable Optical Image Stabilization (OIS) or Video Stabilization
             if let connection = videoDataOutput.connection(with: .video) {
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = self.currentVideoOrientation
+                }
                 if connection.isVideoStabilizationSupported {
                     connection.preferredVideoStabilizationMode = .standard
-                    print("✅ [iOS Camera] Hardware Video Stabilization Enabled")
                 }
             }
             
@@ -201,6 +251,6 @@ final class CameraManager: NSObject, ObservableObject {
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrameCaptured?(pixelBuffer)
+        onFrameCaptured?(pixelBuffer, cgImageOrientation)
     }
 }

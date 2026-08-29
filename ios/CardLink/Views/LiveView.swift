@@ -248,7 +248,7 @@ struct LiveView: View {
         }
         .onAppear {
             setupSlicerCallbacks()
-            cameraManager.setupAndStartSession { pixelBuffer in
+            cameraManager.setupAndStartSession { pixelBuffer, orientation in
                 autoreleasepool {
                     guard let uiImage = self.pixelBufferToUIImage(pixelBuffer) else { return }
                     DispatchQueue.main.async {
@@ -267,11 +267,11 @@ struct LiveView: View {
                         }
                     }
                     
-                    // 2. Full 240 FPS AI Motion & Card Slicer processing
-                    self.cardDetector.processPixelBuffer(pixelBuffer) { result in
-                        if let zoomedCrop = result?.cardImage {
+                    // 2. Full 240 FPS AI Motion & Card Slicer processing with DYNAMIC ORIENTATION!
+                    self.cardDetector.processPixelBuffer(pixelBuffer, orientation: orientation) { result in
+                        if let zoomedCrop = result?.cardImage, (result?.confidence ?? 0.0) >= 0.70 {
                             // Pass the zoomed-in ROI photo focusing on card & hand!
-                            self.cardSlicer.processFrame(zoomedCrop, whitePaperRatio: 0.50, confidence: 0.98)
+                            self.cardSlicer.processFrame(zoomedCrop, whitePaperRatio: 0.50, confidence: result?.confidence ?? 0.98)
                         } else {
                             self.cardSlicer.processFrameNoCard()
                         }

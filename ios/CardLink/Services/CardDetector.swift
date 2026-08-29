@@ -32,13 +32,13 @@ final class CardDetector: ObservableObject {
     private var lastDetectedTime: Date?
     private let holdBufferDuration: TimeInterval = 0.35 // 350ms Hold Buffer
     
-    func processPixelBuffer(_ pixelBuffer: CVPixelBuffer, completion: @escaping (CardDetectionResult?) -> Void) {
+    func processPixelBuffer(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .right, completion: @escaping (CardDetectionResult?) -> Void) {
         autoreleasepool {
-            let portraitCIImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
+            let portraitCIImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
             let portraitWidth = Int(portraitCIImage.extent.width)
             let portraitHeight = Int(portraitCIImage.extent.height)
             
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right, options: [:])
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             
             // 1. Hand Skeleton Pose Request
             let handPoseRequest = VNDetectHumanHandPoseRequest()

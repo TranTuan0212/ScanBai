@@ -86,8 +86,8 @@ final class CardSlowMoSlicer: ObservableObject {
             activeFrames.removeFirst()
         }
         
-        // Instant Fast Motion Gate: Requires only 1 frame (~4ms) to capture rapid flicking gestures!
-        if consecutiveFrameCount >= 1 {
+        // Stable Card Detection Gate: Requires 2 consecutive card frames (~16ms) to eliminate false bedsheet triggers!
+        if consecutiveFrameCount >= 2 {
             isCardActive = true
             
             // STRICT DEDUPLICATION: If card is currently active and hasn't been emitted yet for this slot, emit now!
