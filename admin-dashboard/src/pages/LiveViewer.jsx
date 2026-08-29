@@ -286,7 +286,9 @@ export default function LiveViewer() {
     });
 
     return () => {
-      socket.emit('leave_room', selectedSession.sessionId);
+      if (selectedSession?.sessionId) {
+        socket.emit('leave_room', selectedSession.sessionId);
+      }
       socket.disconnect();
     };
   }, [selectedSession]);
