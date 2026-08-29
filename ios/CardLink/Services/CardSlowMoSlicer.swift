@@ -39,6 +39,10 @@ final class CardSlowMoSlicer: ObservableObject {
         updateStatusBanner()
     }
     
+    convenience init(totalRounds: Int, onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)? = nil) {
+        self.init(totalHands: totalRounds, onCardExtracted: onCardExtracted)
+    }
+    
     /// Reset counter & state machine for new game
     func reset() {
         gameRoundNumber = 1

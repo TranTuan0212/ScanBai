@@ -14,7 +14,7 @@ struct LiveView: View {
     @StateObject private var cameraManager = CameraManager()
     @StateObject private var cardDetector = CardDetector()
     @StateObject private var socketManager = iOSSocketManager.shared
-    @StateObject private var cardSlicer = CardSlowMoSlicer(totalRounds: 3)
+    @StateObject private var cardSlicer = CardSlowMoSlicer(totalHands: 3)
     
     @State private var isLiveActive = false
     @State private var isFakeLocked = false
