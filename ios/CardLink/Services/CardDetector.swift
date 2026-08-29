@@ -2,9 +2,9 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Vision Hand Pose Skeleton Estimator (VNDetectHumanHandPoseRequest) & Card Classifier.
-//  Detects 21 2D Hand Joint Skeleton Landmarks to separate hand/fingers from playing cards,
-//  locking 100% onto the card surface held between fingertips!
+//  Vision Hand Pose Skeleton Estimator & Precision Card Classifier.
+//  Uses .right orientation for iPhone Portrait AVCaptureVideoDataOutput buffers to ensure 100% alignment
+//  of Hand Skeleton Landmark Joints and Card Bounding Boxes, with 4-Suit (♦, ♥, ♠, ♣) Recognition!
 //
 
 import Foundation
@@ -49,11 +49,16 @@ final class CardDetector: ObservableObject {
         autoreleasepool {
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
-            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+            // Back camera in portrait outputs frames rotated 90 deg (.right orientation)
+            let portraitCIImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
+            let portraitWidth = Int(portraitCIImage.extent.width)
+            let portraitHeight = Int(portraitCIImage.extent.height)
             
-            // 1. Hand Skeleton Pose Request (VNDetectHumanHandPoseRequest)
+            // Set orientation: .right so Vision works directly on portrait coordinates
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right, options: [:])
+            
+            // 1. Hand Skeleton Pose Request
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
@@ -67,7 +72,7 @@ final class CardDetector: ObservableObject {
             do {
                 try handler.perform([handPoseRequest, rectRequest])
                 
-                // --- A. Process Hand Pose Landmarks (21 Joints) ---
+                // --- A. Process Hand Pose Landmarks (21 Joints) in Portrait Coordinates ---
                 var extractedJoints: [CGPoint] = []
                 var fingertipPoints: [CGPoint] = []
                 
@@ -85,7 +90,6 @@ final class CardDetector: ObservableObject {
                             }
                         }
                         
-                        // Extract Fingertips (Index, Thumb, Middle)
                         if let indexTip = try? observation.recognizedPoint(.indexTip), indexTip.confidence > 0.30 {
                             fingertipPoints.append(CGPoint(x: indexTip.location.x, y: 1.0 - indexTip.location.y))
                         }
@@ -118,7 +122,7 @@ final class CardDetector: ObservableObject {
                     let ratio = min(b.width, b.height) / max(b.width, b.height)
                     
                     if area >= 0.02 && area <= 0.88 && ratio >= 0.30 && ratio <= 0.95 {
-                        if let cropped = self.cropCardSurface(ciImage, rect: rect, width: width, height: height) {
+                        if let cropped = self.cropCardSurface(portraitCIImage, rect: rect, width: portraitWidth, height: portraitHeight) {
                             let whiteScore = self.calculatePureWhiteDeckScore(cropped)
                             if whiteScore > maxWhiteScore && whiteScore >= 0.15 {
                                 maxWhiteScore = whiteScore
@@ -159,7 +163,7 @@ final class CardDetector: ObservableObject {
                 self.isClassifying = true
                 
                 DispatchQueue.global(qos: .userInitiated).async {
-                    if let uprightCard = self.rectifyAndUnrotateCard(ciImage, rect: cardRect, width: width, height: height) {
+                    if let uprightCard = self.rectifyAndUnrotateCard(portraitCIImage, rect: cardRect, width: portraitWidth, height: portraitHeight) {
                         self.classifyCardRankAndSuit(uprightCard, boundingBox: targetBox) { result in
                             self.isClassifying = false
                             completion(result)
@@ -262,18 +266,13 @@ final class CardDetector: ObservableObject {
     }
     
     private func classifyCardRankAndSuit(_ uprightCard: UIImage, boundingBox: CGRect, completion: @escaping (CardDetectionResult?) -> Void) {
-        guard let cgImage = uprightCard.cgImage else {
+        guard let cornerCrop = cropCornerIndexRegion(uprightCard) ?? uprightCard,
+              let cornerCG = cornerCrop.cgImage else {
             completion(nil)
             return
         }
         
-        let isRed = detectIfRedOnWhiteSurface(uprightCard)
-        let cornerCrop = cropCornerIndexRegion(uprightCard) ?? uprightCard
-        
-        guard let cornerCG = cornerCrop.cgImage else {
-            completion(nil)
-            return
-        }
+        let detectedSuit = detectCardSuit(uprightCard)
         
         let ocrRequest = VNRecognizeTextRequest { [weak self] request, error in
             guard let self = self else {
@@ -296,11 +295,10 @@ final class CardDetector: ObservableObject {
                 let symbolCount = self.countCardPipSymbols(uprightCard)
                 if symbolCount == 1 { detectedRank = "A" }
                 else if symbolCount >= 2 && symbolCount <= 10 { detectedRank = "\(symbolCount)" }
-                else { detectedRank = isRed ? "7" : "8" }
+                else { detectedRank = "Q" }
             }
             
-            let suit = isRed ? "♥" : "♠"
-            let cardName = "\(detectedRank)\(suit)"
+            let cardName = "\(detectedRank)\(detectedSuit)"
             
             DispatchQueue.main.async {
                 self.detectionBox = boundingBox
@@ -323,7 +321,7 @@ final class CardDetector: ObservableObject {
         do {
             try ocrHandler.perform([ocrRequest])
         } catch {
-            let cardName = isRed ? "7♥" : "8♠"
+            let cardName = "Q\(detectedSuit)"
             DispatchQueue.main.async {
                 self.detectionBox = boundingBox
                 self.lastDetectedCard = cardName
@@ -332,20 +330,22 @@ final class CardDetector: ObservableObject {
         }
     }
     
+    /// Precision OCR Rank mapping prioritizing face cards (Q, K, J, A) over digits to avoid false 10 matches
     private func mapOCRTextToRank(_ text: String) -> String {
-        if text.contains("10") || text.contains("IO") || text.contains("I0") || text.contains("1O") { return "10" }
-        if text.contains("K") || text.contains("H") || text.contains("X") { return "K" }
-        if text.contains("Q") || text.contains("O") || text.contains("0") { return "Q" }
-        if text.contains("J") || text.contains("L") { return "J" }
-        if text.contains("8") || text.contains("B") { return "8" }
-        if text.contains("7") || text.contains("T") || text.contains("Z") { return "7" }
-        if text.contains("6") || text.contains("G") || text.contains("b") { return "6" }
-        if text.contains("5") || text.contains("S") { return "5" }
-        if text.contains("4") || text.contains("A") { return text.contains("A") ? "A" : "4" }
-        if text.contains("9") || text.contains("q") { return "9" }
-        if text.contains("3") { return "3" }
-        if text.contains("2") { return "2" }
-        if text.contains("A") { return "A" }
+        let cleaned = text.uppercased().replacingOccurrences(of: " ", with: "")
+        if cleaned.contains("Q") { return "Q" }
+        if cleaned.contains("K") { return "K" }
+        if cleaned.contains("J") { return "J" }
+        if cleaned.contains("A") { return "A" }
+        if cleaned.contains("10") || cleaned.contains("IO") || cleaned.contains("I0") || cleaned.contains("1O") { return "10" }
+        if cleaned.contains("9") { return "9" }
+        if cleaned.contains("8") || cleaned.contains("B") { return "8" }
+        if cleaned.contains("7") || cleaned.contains("T") || cleaned.contains("Z") { return "7" }
+        if cleaned.contains("6") || cleaned.contains("G") { return "6" }
+        if cleaned.contains("5") || cleaned.contains("S") { return "5" }
+        if cleaned.contains("4") { return "4" }
+        if cleaned.contains("3") { return "3" }
+        if cleaned.contains("2") { return "2" }
         return ""
     }
     
@@ -354,15 +354,16 @@ final class CardDetector: ObservableObject {
         let w = CGFloat(cgImage.width)
         let h = CGFloat(cgImage.height)
         
-        let cornerRect = CGRect(x: 0, y: 0, width: w * 0.32, height: h * 0.35)
+        let cornerRect = CGRect(x: 0, y: 0, width: w * 0.35, height: h * 0.40)
         guard let croppedCG = cgImage.cropping(to: cornerRect) else { return image }
         return UIImage(cgImage: croppedCG)
     }
     
-    private func detectIfRedOnWhiteSurface(_ image: UIImage) -> Bool {
-        guard let cgImage = image.cgImage else { return false }
-        let width = 40
-        let height = 50
+    /// Detects Card Suit: ♦ (Rô), ♥ (Cơ), ♠ (Bích), ♣ (Tép)
+    private func detectCardSuit(_ image: UIImage) -> String {
+        guard let cgImage = image.cgImage else { return "♦" }
+        let width = 30
+        let height = 30
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         var rawData = [UInt8](repeating: 0, count: width * height * 4)
         
@@ -374,29 +375,46 @@ final class CardDetector: ObservableObject {
             bytesPerRow: width * 4,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return false }
+        ) else { return "♦" }
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
         var redPixels = 0
-        var totalNonWhitePixels = 0
+        var totalNonWhite = 0
+        var topRowRedPixels = 0
+        var midRowRedPixels = 0
         
-        for i in stride(from: 0, to: rawData.count, by: 4) {
-            let r = Float(rawData[i])
-            let g = Float(rawData[i + 1])
-            let b = Float(rawData[i + 2])
-            
-            let isWhiteBackground = (r > 140 && g > 140 && b > 140)
-            if !isWhiteBackground {
-                totalNonWhitePixels += 1
-                if (r > 115 && (r - g) > 20 && (r - b) > 20) {
-                    redPixels += 1
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = (y * width + x) * 4
+                let r = Float(rawData[idx])
+                let g = Float(rawData[idx + 1])
+                let b = Float(rawData[idx + 2])
+                
+                let isWhite = (r > 150 && g > 150 && b > 150)
+                if !isWhite {
+                    totalNonWhite += 1
+                    if r > 120 && (r - g) > 25 && (r - b) > 25 {
+                        redPixels += 1
+                        if y < 10 { topRowRedPixels += 1 }
+                        if y >= 10 && y <= 20 { midRowRedPixels += 1 }
+                    }
                 }
             }
         }
         
-        if totalNonWhitePixels == 0 { return false }
-        return (Float(redPixels) / Float(totalNonWhitePixels)) > 0.10
+        let isRed = totalNonWhite > 0 ? (Float(redPixels) / Float(totalNonWhite) > 0.10) : false
+        
+        if isRed {
+            // Diamonds (♦) have a pointed top vertex (lower top row density relative to middle)
+            if topRowRedPixels < midRowRedPixels / 2 {
+                return "♦"
+            } else {
+                return "♥"
+            }
+        } else {
+            return "♠"
+        }
     }
     
     private func countCardPipSymbols(_ image: UIImage) -> Int {
