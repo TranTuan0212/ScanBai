@@ -86,11 +86,42 @@ function setupWebSocket(io) {
     socket.on('card_detected', async (data) => {
       try {
         const { sessionId, label, imageBase64 } = data || {};
-        if (!sessionId || !label) return;
+        if (!label) return;
 
-        const targetSessionId = sessionId || socket.currentSessionId;
-        io.to(targetSessionId).emit('card_detected', { label, imageBase64 });
-        io.emit('card_detected', { label, imageBase64 });
+        const targetSessionId = sessionId || socket.currentSessionId || 'active_live_stream';
+        const cardItem = {
+          label: label,
+          image: imageBase64 ? (imageBase64.startsWith('data:') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`) : null,
+          timestamp: new Date().toISOString()
+        };
+
+        // Broadcast card_detected event to all connected web clients & rooms
+        io.to(targetSessionId).emit('card_detected', cardItem);
+        io.emit('card_detected', cardItem);
+
+        // Save to active session cardStack in DB and broadcast card_state
+        if (targetSessionId) {
+          try {
+            const session = await prisma.session.findUnique({ where: { id: targetSessionId } });
+            if (session) {
+              const currentStack = parseStack(session.cardStack);
+              const nextStack = [...currentStack];
+              if (nextStack.length === 0) nextStack.push([]);
+              const currentCol = nextStack[nextStack.length - 1];
+              if (currentCol.length >= 3) {
+                nextStack.push([cardItem]);
+              } else {
+                currentCol.push(cardItem);
+              }
+              await prisma.session.update({
+                where: { id: targetSessionId },
+                data: { cardStack: JSON.stringify(nextStack) }
+              });
+              io.to(targetSessionId).emit('card_state', nextStack);
+              io.emit('card_state', nextStack);
+            }
+          } catch (_) {}
+        }
       } catch (err) {
         console.error('[Socket.IO card_detected Error]', err);
       }
