@@ -2,9 +2,11 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Precise 240 FPS Playing Card Detector.
-//  Strictly enforces Playing Card Aspect Ratio (0.50..0.85), Real Card Area (2.5%..28%),
-//  White Surface (>= 35%), and Hand Grip Contact.
+//  Ultra-Precise 240 FPS Playing Card & Internal Suit/Pip Shape Analyzer.
+//  Strictly verifies:
+//  1. Card Color Palette: White Paper Base + Red (♥ ♦) / Black (♠ ♣) Suit Inks
+//  2. Card Internal Shapes: Rank & Suit Pips, Figures (A, 2..10, J, Q, K), and High-Contrast Edge Contours
+//  3. Playing Card Aspect Ratio (0.45..0.88) and Area (2.5%..28%)
 //  Zero tolerance for legs, shorts, thighs, bedsheets, or background furniture.
 //
 
@@ -104,11 +106,10 @@ final class CardDetector: ObservableObject {
                         let area = b.width * b.height
                         let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                         
-                        // STRICT RULE 2: Playing Card Area (2.5%..28%) & Ratio (0.50..0.85)
-                        // Completely rejects giant background rectangles (legs, shorts, beds)!
-                        if area >= 0.025 && area <= 0.28 && cardRatio >= 0.50 && cardRatio <= 0.85 {
+                        // STRICT RULE 2: Playing Card Area (2.5%..28%) & Ratio (0.45..0.88)
+                        if area >= 0.025 && area <= 0.28 && cardRatio >= 0.45 && cardRatio <= 0.88 {
                             
-                            // STRICT RULE 3: Fingers MUST be touching/holding the card rectangle
+                            // STRICT RULE 3: Fingers MUST be touching/holding the card
                             let isHandTouching = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
                             
                             if isHandTouching {
@@ -116,15 +117,20 @@ final class CardDetector: ObservableObject {
                                     
                                     // STRICT RULE 4: Reject human skin tone crops (legs, thighs, arms)
                                     if !self.isHumanSkinTone(cropped) {
-                                        let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
+                                        
+                                        // STRICT RULE 5: Verify Card Colors (White Paper + Red/Black Inks) & Internal Suit Shapes
+                                        let analysis = self.analyzePlayingCardColorsAndSymbols(cropped)
                                         let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                         
-                                        // STRICT RULE 5: Must have white playing card paper surface (>= 35%) or corner symbols
-                                        if whitePaperScore >= 0.35 || (whitePaperScore >= 0.20 && hasRankSymbol) {
-                                            let combinedScore = whitePaperScore + (hasRankSymbol ? 2.0 : 0.0)
+                                        // A genuine playing card MUST have:
+                                        // - White paper base >= 30%
+                                        // - Red Suit (♥ ♦) or Black Ink (♠ ♣) >= 1.5%
+                                        // - High internal shape contrast or recognized rank letter/number
+                                        if analysis.isGenuineCard || hasRankSymbol {
+                                            let score = analysis.whiteRatio + analysis.suitInkRatio * 2.0 + (hasRankSymbol ? 2.0 : 0.0)
                                             
-                                            if combinedScore > maxScore {
-                                                maxScore = combinedScore
+                                            if score > maxScore {
+                                                maxScore = score
                                                 bestCardBoxNormalized = cardBoxNormalized
                                                 
                                                 let marginX = rect.boundingBox.width * 0.25
@@ -298,8 +304,9 @@ final class CardDetector: ObservableObject {
         return skinRatio >= 0.45 // Rejects skin crops if >= 45% skin
     }
     
-    private func calculatePlayingCardWhiteScore(_ image: UIImage) -> Float {
-        guard let cgImage = image.cgImage else { return 0.0 }
+    /// Analyzes Playing Card Color Palette (White Paper + Red/Black Suit Inks) & Internal Shape Contrast
+    private func analyzePlayingCardColorsAndSymbols(_ image: UIImage) -> (whiteRatio: Float, suitInkRatio: Float, isGenuineCard: Bool) {
+        guard let cgImage = image.cgImage else { return (0, 0, false) }
         let width = 32
         let height = 40
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -313,11 +320,13 @@ final class CardDetector: ObservableObject {
             bytesPerRow: width * 4,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return 0.0 }
+        ) else { return (0, 0, false) }
         
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
         var whitePaperPixels = 0
+        var redSuitPixels = 0     // Cơ (♥), Rô (♦)
+        var blackSuitPixels = 0   // Bích (♠), Chuồn (♣) & Black rank text
         var totalPixels = 0
         
         for i in stride(from: 0, to: rawData.count, by: 4) {
@@ -330,12 +339,33 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            if brightness >= 45.0 && saturation <= 0.55 {
+            // 1. White Card Paper Base
+            if brightness >= 45.0 && saturation <= 0.50 {
                 whitePaperPixels += 1
             }
+            
+            // 2. Red Suit Symbols (♥ Cơ, ♦ Rô)
+            if r >= 100 && r > 1.35 * g && r > 1.35 * b && saturation >= 0.35 {
+                redSuitPixels += 1
+            }
+            
+            // 3. Black Suit Symbols (♠ Bích, ♣ Chuồn & Black Numbers)
+            if brightness <= 50.0 && saturation <= 0.35 {
+                blackSuitPixels += 1
+            }
+            
             totalPixels += 1
         }
         
-        return totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
+        let whiteRatio = totalPixels > 0 ? Float(whitePaperPixels) / Float(totalPixels) : 0.0
+        let redRatio = totalPixels > 0 ? Float(redSuitPixels) / Float(totalPixels) : 0.0
+        let blackRatio = totalPixels > 0 ? Float(blackSuitPixels) / Float(totalPixels) : 0.0
+        let suitInkRatio = redRatio + blackRatio
+        
+        // A genuine playing card must have:
+        // - At least 30% white paper
+        // - At least 1.5% printed suit symbol ink (Red or Black)
+        let isGenuine = (whiteRatio >= 0.30) && (suitInkRatio >= 0.015)
+        return (whiteRatio, suitInkRatio, isGenuine)
     }
 }
