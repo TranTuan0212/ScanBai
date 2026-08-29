@@ -265,6 +265,11 @@ struct LiveView: View {
                 }
             }
         }
+        .onAppear {
+            setupSlicerCallbacks()
+            let token = APIService.shared.getAuthToken() ?? ""
+            socketManager.connect(token: token)
+        }
         .onDisappear {
             stopLiveSession()
         }

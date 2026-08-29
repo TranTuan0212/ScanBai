@@ -94,14 +94,20 @@ final class iOSSocketManager: ObservableObject {
     
     private func handleIncomingPacket(_ text: String) {
         if text.hasPrefix("0") {
-            // 1. Engine.IO Open Packet -> Respond with Socket.IO Connect ("40")
-            print("📩 [iOS Socket] Received Engine.IO Open -> Sending Socket.IO Connect")
+            // 1. Engine.IO Open Packet -> Mark connected & respond with Socket.IO Connect ("40")
+            print("📩 [iOS Socket] Received Engine.IO Open -> Connection Active!")
+            DispatchQueue.main.async {
+                self.isConnected = true
+            }
             sendRaw("40")
+            if let session = self.pendingSessionId {
+                self.joinRoom(sessionId: session)
+            }
         } else if text.hasPrefix("2") {
             // 2. Engine.IO Ping -> Respond with Pong ("3")
             sendRaw("3")
         } else if text.hasPrefix("40") {
-            // 3. Socket.IO Connect ACK -> Connection is Fully Established!
+            // 3. Socket.IO Connect ACK
             print("✅ [iOS Socket] Socket.IO Handshake Complete & Connected!")
             DispatchQueue.main.async {
                 self.isConnected = true
