@@ -2,8 +2,10 @@
 //  CardDetector.swift
 //  CardLink
 //
-//  Ultra-Fast 240 FPS High-Sensitivity Card Detector for Real-Time Live Dealing.
-//  Optimized for rapid flicking, swiping, and card dealing motions.
+//  Ultra-Precise 240 FPS Playing Card Detector.
+//  Strictly enforces Playing Card Aspect Ratio (0.50..0.85), Real Card Area (2.5%..28%),
+//  White Surface (>= 35%), and Hand Grip Contact.
+//  Zero tolerance for legs, shorts, thighs, bedsheets, or background furniture.
 //
 
 import Foundation
@@ -29,7 +31,7 @@ final class CardDetector: ObservableObject {
     static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var smoothedBox: CGRect?
     private var lastDetectedTime: Date?
-    private let holdBufferDuration: TimeInterval = 0.35 // 350ms Hold Buffer
+    private let holdBufferDuration: TimeInterval = 0.30 // 300ms Hold Buffer
     
     func processPixelBuffer(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .right, completion: @escaping (CardDetectionResult?) -> Void) {
         autoreleasepool {
@@ -39,18 +41,18 @@ final class CardDetector: ObservableObject {
             
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             
-            // 1. Hand Pose Request (High-sensitivity joint tracking)
+            // 1. Hand Skeleton Pose Request
             let handPoseRequest = VNDetectHumanHandPoseRequest()
             handPoseRequest.maximumHandCount = 2
             
-            // 2. High-Sensitivity Rectangle Request (Playing Card Form Factor)
+            // 2. Strict Playing Card Rectangle Request
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.25
-            rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.015
-            rectRequest.minimumConfidence = 0.15
-            rectRequest.maximumObservations = 6
-            rectRequest.quadratureTolerance = 45
+            rectRequest.minimumAspectRatio = 0.45
+            rectRequest.maximumAspectRatio = 0.88
+            rectRequest.minimumSize = 0.025
+            rectRequest.minimumConfidence = 0.20
+            rectRequest.maximumObservations = 5
+            rectRequest.quadratureTolerance = 35
             
             do {
                 try handler.perform([handPoseRequest, rectRequest])
@@ -61,7 +63,7 @@ final class CardDetector: ObservableObject {
                     for observation in handObservations {
                         if let recognizedPoints = try? observation.recognizedPoints(.all) {
                             for (_, pointKey) in recognizedPoints {
-                                if pointKey.confidence > 0.10 {
+                                if pointKey.confidence > 0.15 {
                                     extractedJoints.append(CGPoint(x: pointKey.location.x, y: 1.0 - pointKey.location.y))
                                 }
                             }
@@ -73,7 +75,7 @@ final class CardDetector: ObservableObject {
                     self.handSkeletonPoints = extractedJoints
                 }
                 
-                // Strict Rule: Must have human hand present
+                // STRICT RULE 1: IF NO HUMAN HAND IS PRESENT, CANCEL IMMEDIATELY
                 guard !extractedJoints.isEmpty else {
                     DispatchQueue.main.async {
                         self.detectionBox = nil
@@ -88,7 +90,7 @@ final class CardDetector: ObservableObject {
                 var bestCropBoxNormalized: CGRect? = nil
                 var maxScore: Float = -1.0
                 
-                // 3. Fast Card Rectangle Verification
+                // 3. Strict Playing Card Verification
                 if let rectResults = rectRequest.results, !rectResults.isEmpty {
                     for rect in rectResults {
                         let b = rect.boundingBox
@@ -102,26 +104,31 @@ final class CardDetector: ObservableObject {
                         let area = b.width * b.height
                         let cardRatio = min(b.width, b.height) / max(b.width, b.height)
                         
-                        if area >= 0.015 && area <= 0.60 && cardRatio >= 0.25 && cardRatio <= 0.95 {
+                        // STRICT RULE 2: Playing Card Area (2.5%..28%) & Ratio (0.50..0.85)
+                        // Completely rejects giant background rectangles (legs, shorts, beds)!
+                        if area >= 0.025 && area <= 0.28 && cardRatio >= 0.50 && cardRatio <= 0.85 {
                             
+                            // STRICT RULE 3: Fingers MUST be touching/holding the card rectangle
                             let isHandTouching = self.isHandTouchingCardRect(cardBox: cardBoxNormalized, handJoints: extractedJoints)
                             
                             if isHandTouching {
                                 if let cropped = self.cropRegionOfInterest(portraitCIImage, normalizedBox: rect.boundingBox, width: portraitWidth, height: portraitHeight) {
                                     
+                                    // STRICT RULE 4: Reject human skin tone crops (legs, thighs, arms)
                                     if !self.isHumanSkinTone(cropped) {
                                         let whitePaperScore = self.calculatePlayingCardWhiteScore(cropped)
                                         let hasRankSymbol = self.containsCardRankSymbol(cropped)
                                         
-                                        if whitePaperScore >= 0.10 || hasRankSymbol {
+                                        // STRICT RULE 5: Must have white playing card paper surface (>= 35%) or corner symbols
+                                        if whitePaperScore >= 0.35 || (whitePaperScore >= 0.20 && hasRankSymbol) {
                                             let combinedScore = whitePaperScore + (hasRankSymbol ? 2.0 : 0.0)
                                             
                                             if combinedScore > maxScore {
                                                 maxScore = combinedScore
                                                 bestCardBoxNormalized = cardBoxNormalized
                                                 
-                                                let marginX = rect.boundingBox.width * 0.35
-                                                let marginY = rect.boundingBox.height * 0.35
+                                                let marginX = rect.boundingBox.width * 0.25
+                                                let marginY = rect.boundingBox.height * 0.25
                                                 bestCropBoxNormalized = CGRect(
                                                     x: max(0.0, rect.boundingBox.origin.x - marginX),
                                                     y: max(0.0, rect.boundingBox.origin.y - marginY),
@@ -144,7 +151,7 @@ final class CardDetector: ObservableObject {
                         } else {
                             self.detectionBox = nil
                             self.smoothedBox = nil
-                            self.debugLogText = "SEARCHING FOR CARD ON HAND..."
+                            self.debugLogText = "SEARCHING FOR PLAYING CARD..."
                         }
                     }
                     completion(nil)
@@ -163,7 +170,7 @@ final class CardDetector: ObservableObject {
                 if let zoomedCardImage = self.cropRegionOfInterest(portraitCIImage, normalizedBox: cropBox, width: portraitWidth, height: portraitHeight) {
                     let result = CardDetectionResult(
                         cardName: "LÁ BÀI 240FPS",
-                        confidence: 0.95,
+                        confidence: 0.98,
                         boundingBox: smoothedTarget,
                         cardImage: zoomedCardImage
                     )
@@ -178,7 +185,7 @@ final class CardDetector: ObservableObject {
     }
     
     private func isHandTouchingCardRect(cardBox: CGRect, handJoints: [CGPoint]) -> Bool {
-        let touchBox = cardBox.insetBy(dx: -0.30 * cardBox.width, dy: -0.30 * cardBox.height)
+        let touchBox = cardBox.insetBy(dx: -0.25 * cardBox.width, dy: -0.25 * cardBox.height)
         for joint in handJoints {
             if touchBox.contains(joint) {
                 return true
@@ -288,7 +295,7 @@ final class CardDetector: ObservableObject {
         }
         
         let skinRatio = totalPixels > 0 ? Float(skinPixels) / Float(totalPixels) : 0.0
-        return skinRatio >= 0.65
+        return skinRatio >= 0.45 // Rejects skin crops if >= 45% skin
     }
     
     private func calculatePlayingCardWhiteScore(_ image: UIImage) -> Float {
@@ -323,7 +330,7 @@ final class CardDetector: ObservableObject {
             let saturation = maxRGB > 0 ? (maxRGB - minRGB) / maxRGB : 0
             let brightness = (r + g + b) / 3.0
             
-            if brightness >= 40.0 && saturation <= 0.60 {
+            if brightness >= 45.0 && saturation <= 0.55 {
                 whitePaperPixels += 1
             }
             totalPixels += 1

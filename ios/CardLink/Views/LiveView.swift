@@ -291,12 +291,12 @@ struct LiveView: View {
                         self.latestUIImage = uiImage
                     }
                     
-                    // 1. Stream live video frame to Backend downsampled to 10 FPS (~100ms) with lightweight 360p compression (12KB)
+                    // 1. Lightweight Live Preview Streaming (4 FPS ~250ms, 6KB) to prevent WebSocket buffer overflow!
                     let now = Date().timeIntervalSince1970
-                    if self.isLiveActive && (now - self.lastProcessedTime >= 0.100) {
+                    if self.isLiveActive && (now - self.lastProcessedTime >= 0.250) {
                         self.lastProcessedTime = now
-                        let resized = self.resizeImageForStream(uiImage, targetWidth: 360)
-                        if let jpegData = resized.jpegData(compressionQuality: 0.20) {
+                        let resized = self.resizeImageForStream(uiImage, targetWidth: 240)
+                        if let jpegData = resized.jpegData(compressionQuality: 0.15) {
                             let base64String = jpegData.base64EncodedString()
                             let dataUri = "data:image/jpeg;base64,\(base64String)"
                             self.socketManager.sendLiveFrame(sessionId: self.sessionId, dataUri: dataUri)
