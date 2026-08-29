@@ -2,8 +2,8 @@
 //  CardSlowMoSlicer.swift
 //  CardLink
 //
-//  Real-Life Dealing State Machine with Shuffling/Squaring Isolation.
-//  Distinguishes between Deck Shuffling / Squaring (Xốc Bài / Sấp Bài) and Active Dealing (Chia Bài).
+//  Ultra High-Speed 240 FPS Deal Slicer with Instant 1-Frame Dealing Trigger.
+//  Captures fast card dealing swipes and fills each player's slot sequentially.
 //
 
 import Foundation
@@ -16,13 +16,13 @@ final class CardSlowMoSlicer: ObservableObject {
     @Published var currentHandIndex: Int = 1       // Tụ #1..N
     @Published var currentCardIndex: Int = 1       // Lá #1..3
     @Published var totalHands: Int = 3             // Tổng số tụ (Ví dụ: 3 Tụ)
-    @Published var totalDealtCardsInRound: Int = 0  // Số lá đã chia trong ván hiện tại (0..9)
+    @Published var totalDealtCardsInRound: Int = 0  // Số lá đã chia trong ván hiện tại (0..9 hoặc 0..12)
     @Published var totalDealtCardsGlobal: Int = 0   // Tổng số lá chia tất cả ván
     @Published var isDealingActive: Bool = true    // Chế độ: TRUE = ĐANG CHIA BÀI | FALSE = ĐANG XỐC BÀI (KHÓA GỬI)
     @Published var isRoundJustCompleted: Bool = false
     @Published var statusBannerText: String = "🎴 CHUẨN BỊ CHIA: TỤ 1 - LÁ 1 (VÁN #1)"
     
-    // State Machine & Strict Timing Controls
+    // State Machine & Ultra-Fast Timing
     private var isCardActive: Bool = false
     private var hasSentCurrentCardSlot: Bool = false
     private var lastEmittedSlotIndex: Int = -1
@@ -81,26 +81,23 @@ final class CardSlowMoSlicer: ObservableObject {
     }
     
     /// Processes incoming frame with cropped card surface
-    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.98) {
-        // STRICT RULE 1: If currently in Shuffling mode, IGNORE EVERYTHING!
+    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.95) {
         guard isDealingActive else { return }
         
         let now = Date()
-        
-        // STRICT RULE 2: Minimum 0.8 second interval between dealt cards in real life!
-        guard now.timeIntervalSince(lastEmitTime) >= 0.80 else { return }
+        guard now.timeIntervalSince(lastEmitTime) >= 0.35 else { return }
         
         consecutiveFrameCount += 1
         absentFrameCount = 0
         lastSeenTime = now
         activeFrames.append(image)
         
-        if activeFrames.count > 30 {
+        if activeFrames.count > 20 {
             activeFrames.removeFirst()
         }
         
-        // Require 3 consecutive valid frames (~25ms) to confirm genuine card presentation
-        if consecutiveFrameCount >= 3 {
+        // Instant Fast Motion Deal Trigger: 1-frame (~4ms) is enough to capture fast dealing swipes!
+        if consecutiveFrameCount >= 1 {
             isCardActive = true
             
             if !hasSentCurrentCardSlot {
@@ -118,16 +115,16 @@ final class CardSlowMoSlicer: ObservableObject {
         if isCardActive {
             absentFrameCount += 1
             
-            // Require 8 consecutive absent frames (~35ms departure) to confirm card left frame
-            if absentFrameCount >= 8 {
+            // Require only 4 absent frames (~16ms departure) to immediately re-arm for the next dealt card!
+            if absentFrameCount >= 4 {
                 isCardActive = false
-                hasSentCurrentCardSlot = false // Open gate for next dealt card!
+                hasSentCurrentCardSlot = false // Re-arm for next card!
                 absentFrameCount = 0
                 activeFrames.removeAll()
             }
         } else {
             absentFrameCount = 0
-            if now.timeIntervalSince(lastSeenTime) > 0.4 {
+            if now.timeIntervalSince(lastSeenTime) > 0.3 {
                 hasSentCurrentCardSlot = false
                 activeFrames.removeAll()
             }
@@ -247,6 +244,6 @@ final class CardSlowMoSlicer: ObservableObject {
         let imageBase64 = jpegData.base64EncodedString()
         
         onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
-        print("🃟 [iOS Deal Slicer] Emitted card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
+        print("🃟 [iOS Fast Slicer] Emitted card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }
