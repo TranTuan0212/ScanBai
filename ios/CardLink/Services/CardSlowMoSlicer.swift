@@ -74,51 +74,51 @@ final class CardSlowMoSlicer: ObservableObject {
         }
     }
     
-    /// Processes incoming 240 FPS frame with white card ratio and confidence
-    func processFrame(_ image: UIImage, whitePaperRatio: Float, confidence: Float = 0.80) {
+    /// Processes incoming 240 FPS frame with cropped card surface
+    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.98) {
         let now = Date()
-        let isValidCardPresence = whitePaperRatio >= 0.08 || confidence >= 0.50
+        consecutiveFrameCount += 1
+        absentFrameCount = 0
+        lastSeenTime = now
+        activeFrames.append(image)
         
-        if isValidCardPresence {
-            consecutiveFrameCount += 1
-            absentFrameCount = 0
-            lastSeenTime = now
-            activeFrames.append(image)
+        if activeFrames.count > 30 {
+            activeFrames.removeFirst()
+        }
+        
+        // Requires 3 consecutive frames (~12ms) to confirm deal motion
+        if consecutiveFrameCount >= 3 {
+            isCardActive = true
             
-            if activeFrames.count > 30 {
-                activeFrames.removeFirst()
-            }
-            
-            // Requires 3 consecutive frames (~12ms) to confirm deal motion
-            if consecutiveFrameCount >= 3 {
-                isCardActive = true
-                
-                // STRICT DEDUPLICATION: If card is currently active and hasn't been emitted yet for this slot, emit now!
-                if !hasSentCurrentCardSlot && now.timeIntervalSince(lastEmitTime) >= 0.5 {
-                    if !activeFrames.isEmpty {
-                        let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
-                        extractAndEmitCard(sharpestImage)
-                    }
+            // STRICT DEDUPLICATION: If card is currently active and hasn't been emitted yet for this slot, emit now!
+            if !hasSentCurrentCardSlot && now.timeIntervalSince(lastEmitTime) >= 0.4 {
+                if !activeFrames.isEmpty {
+                    let sharpestImage = findSharpestFrame(in: activeFrames) ?? image
+                    extractAndEmitCard(sharpestImage)
                 }
+            }
+        }
+    }
+    
+    /// Called when no valid card is detected in frame
+    func processFrameNoCard() {
+        let now = Date()
+        consecutiveFrameCount = 0
+        if isCardActive {
+            absentFrameCount += 1
+            
+            // Requires 6 consecutive absent frames (~25ms departure) to confirm card left frame completely
+            if absentFrameCount >= 6 {
+                isCardActive = false
+                hasSentCurrentCardSlot = false // RE-ARM GATE FOR NEXT DEALT CARD!
+                absentFrameCount = 0
+                activeFrames.removeAll()
             }
         } else {
-            consecutiveFrameCount = 0
-            if isCardActive {
-                absentFrameCount += 1
-                
-                // Requires 6 consecutive absent frames (~25ms departure) to confirm card left frame completely
-                if absentFrameCount >= 6 {
-                    isCardActive = false
-                    hasSentCurrentCardSlot = false // RE-ARM GATE FOR NEXT DEALT CARD!
-                    absentFrameCount = 0
-                    activeFrames.removeAll()
-                }
-            } else {
-                absentFrameCount = 0
-                hasSentCurrentCardSlot = false // RE-ARM GATE IF NO CARD SEEN FOR > 0.5s
-                if now.timeIntervalSince(lastSeenTime) > 0.5 {
-                    activeFrames.removeAll()
-                }
+            absentFrameCount = 0
+            hasSentCurrentCardSlot = false
+            if now.timeIntervalSince(lastSeenTime) > 0.5 {
+                activeFrames.removeAll()
             }
         }
     }
@@ -233,10 +233,10 @@ final class CardSlowMoSlicer: ObservableObject {
             self.updateStatusBanner()
         }
         
-        guard let jpegData = sharpestImage.jpegData(compressionQuality: 0.50) else { return }
+        guard let jpegData = sharpestImage.jpegData(compressionQuality: 0.60) else { return }
         let imageBase64 = jpegData.base64EncodedString()
         
         onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
-        print("🃟 [iOS 240FPS Slicer] Emitted UNIQUE dealt card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
+        print("🃟 [iOS 240FPS Slicer] Emitted CROPPED card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }

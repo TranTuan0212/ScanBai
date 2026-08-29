@@ -244,16 +244,10 @@ struct LiveView: View {
                     
                     // 2. Full 240 FPS AI Motion & Card Slicer processing
                     self.cardDetector.processPixelBuffer(pixelBuffer) { result in
-                        let confidence = result?.confidence ?? 0.0
-                        self.cardSlicer.processFrame(uiImage, whitePaperRatio: 0.25, confidence: confidence)
-                        if self.isLiveActive, let result = result {
-                            let label = result.cardName
-                            let cardImgBase64 = result.cardImage?.jpegData(compressionQuality: 0.4)?.base64EncodedString() ?? ""
-                            self.socketManager.sendCardDetected(
-                                sessionId: self.sessionId,
-                                label: label,
-                                imageBase64: cardImgBase64
-                            )
+                        if let cardCrop = result?.cardImage {
+                            self.cardSlicer.processFrame(cardCrop, whitePaperRatio: 0.50, confidence: 0.98)
+                        } else {
+                            self.cardSlicer.processFrameNoCard()
                         }
                     }
                 }
