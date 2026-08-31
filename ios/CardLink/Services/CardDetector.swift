@@ -129,15 +129,48 @@ final class CardDetector: ObservableObject {
                 return
             }
             
-            // 1. Extract Downsampled Pixel Grid
+            // 1. Apple Vision Native Neural Rectangle Detector (Primary Card Locator)
+            let rectRequest = VNDetectRectanglesRequest()
+            rectRequest.minimumAspectRatio = 0.40
+            rectRequest.maximumAspectRatio = 0.95
+            rectRequest.minimumSize = 0.06
+            rectRequest.maximumObservations = 3
+            
+            let handler = VNImageRequestHandler(ciImage: portraitCIImage, options: [:])
+            var visionCandidateBox: CGRect? = nil
+            
+            try? handler.perform([rectRequest])
+            if let results = rectRequest.results, let topRect = results.first {
+                let boundingBox = topRect.boundingBox
+                // Convert Apple Vision normalized box (Origin Bottom-Left) to UIKit (Origin Top-Left)
+                visionCandidateBox = CGRect(
+                    x: boundingBox.origin.x,
+                    y: 1.0 - boundingBox.origin.y - boundingBox.height,
+                    width: boundingBox.width,
+                    height: boundingBox.height
+                )
+            }
+
+            // 2. Extract Downsampled Pixel Grid Fallback
             guard let cgImage = CardDetector.ciContext.createCGImage(portraitCIImage, from: portraitCIImage.extent),
                   let pixelData = extractAnalysisGridPixels(from: cgImage, targetWidth: gridW, targetHeight: gridH) else {
                 completion(nil)
                 return
             }
             
-            // 2. Pure Computer Vision: Extract Progressive Card Candidates (Even 10% partial corner)
-            let candidates = detectProgressiveCandidates(pixelData: pixelData, width: gridW, height: gridH)
+            var candidates = detectProgressiveCandidates(pixelData: pixelData, width: gridW, height: gridH)
+            
+            // If Apple Vision detected a sharp card rectangle, prioritize it!
+            if let vBox = visionCandidateBox {
+                candidates.insert(DetectedCandidate(
+                    box: vBox,
+                    visibility: 1.0,
+                    cardConfidence: 0.98,
+                    inkScore: 0.05,
+                    redRatio: 0.02,
+                    blackRatio: 0.02
+                ), at: 0)
+            }
             
             // 3. Multi-Frame Tracker & Predictor
             let activeTrack = updateTracksWithCandidates(candidates: candidates)
