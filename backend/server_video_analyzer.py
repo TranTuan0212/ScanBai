@@ -59,31 +59,61 @@ def compute_sharpness(img_bgr):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-def is_valid_card_contour(c, proc_w, proc_h):
-    area = cv2.contourArea(c)
-    frame_area = proc_w * proc_h
-    # Card area must be between 0.4% and 25% of frame
-    if area < frame_area * 0.004 or area > frame_area * 0.25:
-        return False, None
-        
-    px, py, pbw, pbh = cv2.boundingRect(c)
-    aspect_ratio = float(pbw) / float(pbh)
+def extract_oriented_card_corners(full_frame, contour, scale):
+    """
+    Computes Minimum Area Rotated Bounding Rectangle (cv2.minAreaRect)
+    Un-warps tilted/rotated held cards into upright 0.60 aspect ratio corner crops.
+    """
+    rect = cv2.minAreaRect(contour)
+    (cx, cy), (w, h), angle = rect
     
-    # Standard card ratio range
-    if not (0.35 <= aspect_ratio <= 2.20):
-        return False, None
-        
-    # Polygon approximation: Cards are 4-sided quadrilaterals!
-    peri = cv2.arcLength(c, True)
-    approx = cv2.approxPolyDP(c, 0.035 * peri, True)
+    # Scale center and dimensions back to full-resolution frame
+    cx, cy = cx / scale, cy / scale
+    w, h = w / scale, h / scale
     
-    # Shirt sleeves and arms have curved borders with > 6 vertices
-    if len(approx) > 8:
-        return False, None
+    if w < 10 or h < 10:
+        return []
         
-    return True, (px, py, pbw, pbh)
+    # Ensure h >= w for card upright orientation
+    if w > h:
+        w, h = h, w
+        angle += 90.0
+        
+    # Get standard 4 rotated bounding box points
+    box_pts = cv2.boxPoints(((cx, cy), (w, h), angle))
+    
+    # Warp perspective to straighten tilted card
+    dst_w, dst_h = int(w), int(h)
+    if dst_w < 20 or dst_h < 30:
+        return []
+        
+    dst_pts = torch.tensor([[0, 0], [dst_w-1, 0], [dst_w-1, dst_h-1], [0, dst_h-1]], dtype=torch.float32).numpy()
+    M = cv2.getPerspectiveTransform(box_pts.astype('float32'), dst_pts)
+    warped_card = cv2.warpPerspective(full_frame, M, (dst_w, dst_h))
+    
+    if warped_card.size == 0:
+        return []
+        
+    # Extract 4 rotated corner crops (0°, 90°, 180°, 270°)
+    c_w = max(14, int(dst_w * 0.35))
+    c_h = max(22, int(c_w / 0.60))
+    
+    corner_crops = []
+    # 1. Top-Left Corner
+    crop_tl = warped_card[0:c_h, 0:c_w]
+    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
+        corner_crops.append(crop_tl)
+        
+    # 2. Bottom-Right Corner (Rotated 180°)
+    br_y = max(0, dst_h - c_h)
+    br_x = max(0, dst_w - c_w)
+    crop_br = warped_card[br_y:dst_h, br_x:dst_w]
+    if crop_br.shape[0] > 10 and crop_br.shape[1] > 10:
+        corner_crops.append(cv2.rotate(crop_br, cv2.ROTATE_180))
+        
+    return corner_crops, warped_card, (int(cx - w/2), int(cy - h/2), int(w), int(h))
 
-def analyze_video_with_video_overlay(video_path, total_hands=3):
+def analyze_video_tilted_cards(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -154,46 +184,45 @@ def analyze_video_with_video_overlay(video_path, total_hands=3):
             white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
             cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            best_contour_box = None
+            frame_area = proc_w * proc_h
+            best_contour = None
             best_area = 0
             
             for c in cnts:
-                is_valid, box = is_valid_card_contour(c, proc_w, proc_h)
-                if is_valid and box is not None:
-                    area = box[2] * box[3]
-                    if area > best_area:
-                        best_area = area
-                        best_contour_box = box
-                            
-            if best_contour_box is not None:
-                px, py, pbw, pbh = best_contour_box
-                x = int(px / scale)
-                y = int(py / scale)
-                bw = int(pbw / scale)
-                bh = int(pbh / scale)
-                
-                card_roi = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
-                sharpness = compute_sharpness(card_roi)
-                
-                current_track.append({
-                    'timestamp': timestamp,
-                    'frame': frame,
-                    'box': (x, y, bw, bh),
-                    'normBox': (x / width, y / height, bw / width, bh / height),
-                    'sharpness': sharpness,
-                    'card_roi': card_roi
-                })
+                area = cv2.contourArea(c)
+                if area >= frame_area * 0.003 and area <= frame_area * 0.35:
+                    rect = cv2.minAreaRect(c)
+                    (cx, cy), (w, h), angle = rect
+                    if w > 0 and h > 0:
+                        aspect_ratio = max(w, h) / min(w, h)
+                        if 1.1 <= aspect_ratio <= 3.2:
+                            if area > best_area:
+                                best_area = area
+                                best_contour = c
+                                
+            if best_contour is not None:
+                res = extract_oriented_card_corners(frame, best_contour, scale)
+                if res:
+                    corner_crops, warped_card, (x, y, bw, bh) = res
+                    sharpness = compute_sharpness(warped_card)
+                    
+                    current_track.append({
+                        'timestamp': timestamp,
+                        'frame': frame,
+                        'box': (x, y, bw, bh),
+                        'normBox': (max(0, x) / width, max(0, y) / height, min(width, bw) / width, min(height, bh) / height),
+                        'sharpness': sharpness,
+                        'corner_crops': corner_crops,
+                        'warped_card': warped_card
+                    })
             else:
                 if len(current_track) >= 2:
                     best_item = max(current_track, key=lambda d: d['sharpness'])
-                    f = best_item['frame']
-                    x, y, bw, bh = best_item['box']
-                    c_w = max(14, int(bw * 0.28))
-                    c_h = max(22, int(c_w / 0.60))
+                    best_conf = 0.0
+                    best_label = None
                     
-                    crop_tl = f[y:y+c_h, x:x+c_w]
-                    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-                        pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+                    for crop in best_item['corner_crops']:
+                        pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
                         tensor_img = transform(pil_img).unsqueeze(0)
                         
                         rank_logits, suit_logits = model(tensor_img)
@@ -207,37 +236,37 @@ def analyze_video_with_video_overlay(video_path, total_hands=3):
                         s_conf = suit_probs[s_idx].item()
                         conf = (r_conf + s_conf) / 2.0
                         
-                        if conf >= 0.55:
-                            card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                            annotated = best_item['card_roi'].copy()
-                            cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
-                            cv2.putText(annotated, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                        if conf > best_conf:
+                            best_conf = conf
+                            best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                             
-                            _, crop_buffer = cv2.imencode('.jpg', annotated)
-                            crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
-                            
-                            card_events.append({
-                                'timestamp': float(best_item['timestamp']),
-                                'card_name': card_name,
-                                'confidence': float(conf),
-                                'normBox': best_item['normBox'],
-                                'crop_base64': crop_base64
-                            })
+                    if best_conf >= 0.50 and best_label is not None:
+                        annotated = best_item['warped_card'].copy()
+                        cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
+                        cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                        
+                        _, crop_buffer = cv2.imencode('.jpg', annotated)
+                        crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                        
+                        card_events.append({
+                            'timestamp': float(best_item['timestamp']),
+                            'card_name': best_label,
+                            'confidence': float(best_conf),
+                            'normBox': best_item['normBox'],
+                            'crop_base64': crop_base64
+                        })
                     current_track = []
                 else:
                     current_track = []
 
         if len(current_track) >= 2:
             best_item = max(current_track, key=lambda d: d['sharpness'])
-            f = best_item['frame']
-            x, y, bw, bh = best_item['box']
-            c_w = max(14, int(bw * 0.28))
-            c_h = max(22, int(c_w / 0.60))
+            best_conf = 0.0
+            best_label = None
             
-            crop_tl = f[y:y+c_h, x:x+c_w]
-            if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-                pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+            for crop in best_item['corner_crops']:
+                pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
                 tensor_img = transform(pil_img).unsqueeze(0)
                 
                 rank_logits, suit_logits = model(tensor_img)
@@ -251,23 +280,26 @@ def analyze_video_with_video_overlay(video_path, total_hands=3):
                 s_conf = suit_probs[s_idx].item()
                 conf = (r_conf + s_conf) / 2.0
                 
-                if conf >= 0.55:
-                    card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                    annotated = best_item['card_roi'].copy()
-                    cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
-                    cv2.putText(annotated, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                if conf > best_conf:
+                    best_conf = conf
+                    best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                     
-                    _, crop_buffer = cv2.imencode('.jpg', annotated)
-                    crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
-                    
-                    card_events.append({
-                        'timestamp': float(best_item['timestamp']),
-                        'card_name': card_name,
-                        'confidence': float(conf),
-                        'normBox': best_item['normBox'],
-                        'crop_base64': crop_base64
-                    })
+            if best_conf >= 0.50 and best_label is not None:
+                annotated = best_item['warped_card'].copy()
+                cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
+                cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                
+                _, crop_buffer = cv2.imencode('.jpg', annotated)
+                crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                
+                card_events.append({
+                    'timestamp': float(best_item['timestamp']),
+                    'card_name': best_label,
+                    'confidence': float(best_conf),
+                    'normBox': best_item['normBox'],
+                    'crop_base64': crop_base64
+                })
 
     cap.release()
     
@@ -301,4 +333,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_with_video_overlay(v_path, t_hands)
+        analyze_video_tilted_cards(v_path, t_hands)
