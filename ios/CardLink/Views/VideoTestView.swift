@@ -143,13 +143,13 @@ struct VideoTestView: View {
                         .background(Capsule().fill(Color.yellow))
                         .shadow(color: .yellow.opacity(0.4), radius: 6)
                     }
-                    .onChange(of: selectedItem) { _, newItem in
+                    .onChange(of: selectedItem, perform: { newItem in
                         Task {
                             if let item = newItem, let movie = try? await item.loadTransferable(type: MovieFile.self) {
                                 processSelectedVideo(url: movie.url)
                             }
                         }
-                    }
+                    })
                     
                     if !detectedCards.isEmpty {
                         Button(action: sendResultsToServer) {
@@ -322,7 +322,7 @@ struct VideoTestView: View {
         }
     }
     
-    private func cgOrientationFromTransform(_ transform: CGAffineTransform) -> CGImagePropertyOrientation {
+    private nonisolated func cgOrientationFromTransform(_ transform: CGAffineTransform) -> CGImagePropertyOrientation {
         if transform.a == 0 && transform.b == 1.0 && transform.c == -1.0 && transform.d == 0 {
             return .right
         } else if transform.a == 0 && transform.b == -1.0 && transform.c == 1.0 && transform.d == 0 {
@@ -336,7 +336,7 @@ struct VideoTestView: View {
         }
     }
     
-    private func pixelBufferToUIImage(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage? {
+    private nonisolated func pixelBufferToUIImage(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let ctx = CIContext(options: [.useSoftwareRenderer: false])
         guard let cgImage = ctx.createCGImage(ciImage, from: ciImage.extent) else { return nil }
