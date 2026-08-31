@@ -257,12 +257,13 @@ final class CardDetector: ObservableObject {
                 let isSkinTone = (r > 75 && g > 40 && b > 25 && r > g && (r - b) > 20 && saturation >= 0.18 && saturation <= 0.68)
                 
                 if !isSkinTone {
-                    if brightness >= 105.0 && saturation <= 0.30 {
+                    // Indoor Dim/Warm Lighting Card Paper Detection (brightness >= 60.0, saturation <= 0.40)
+                    if brightness >= 60.0 && saturation <= 0.40 {
                         mask[y * width + x] = 1 // White Card Base
                         totalWhite += 1
-                    } else if r >= 95.0 && r > 1.30 * g && r > 1.30 * b && saturation >= 0.32 {
+                    } else if r >= 80.0 && r > 1.20 * g && r > 1.20 * b && saturation >= 0.25 {
                         mask[y * width + x] = 2 // Red Ink (♥ Cơ, ♦ Rô)
-                    } else if brightness < 58.0 && saturation <= 0.32 {
+                    } else if brightness < 65.0 && saturation <= 0.40 {
                         mask[y * width + x] = 3 // Black Ink (♠ Bích, ♣ Chuồn)
                     }
                 }
