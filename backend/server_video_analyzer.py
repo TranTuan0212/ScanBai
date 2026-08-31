@@ -54,7 +54,7 @@ def load_trained_model():
     model.eval()
     return model
 
-def analyze_video_with_crops(video_path, total_hands=3):
+def analyze_video_multi_candidate(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -82,78 +82,89 @@ def analyze_video_with_crops(video_path, total_hands=3):
         frame_idx += 1
         timestamp = frame_idx / fps
         
+        # 1. White Card Paper Isolation via HSV + RGB Contrast
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # White paper mask: Low Saturation (S <= 85), Medium-High Brightness (V >= 85)
+        white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
+        _, otsu_mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        card_mask = cv2.bitwise_or(white_mask, otsu_mask)
+        
+        contours, _ = cv2.findContours(card_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         frame_area = width * height
         
-        best_candidate_box = None
-        best_candidate_area = 0
-        
+        # Process ALL valid card candidate contours in the frame
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < frame_area * 0.005 or area > frame_area * 0.40:
+            if area < frame_area * 0.003 or area > frame_area * 0.45:
                 continue
                 
             x, y, bw, bh = cv2.boundingRect(cnt)
             aspect_ratio = float(bw) / float(bh)
-            if 0.40 <= aspect_ratio <= 2.20:
-                if area > best_candidate_area:
-                    best_candidate_area = area
-                    best_candidate_box = (x, y, bw, bh)
-                    
-        if best_candidate_box is not None:
-            x, y, bw, bh = best_candidate_box
-            corner_w = max(10, int(bw * 0.28))
-            corner_h = max(10, int(bh * 0.32))
-            corner_bgr = frame[y:y+corner_h, x:x+corner_w]
             
-            if corner_bgr.shape[0] > 10 and corner_bgr.shape[1] > 10:
-                pil_img = Image.fromarray(cv2.cvtColor(corner_bgr, cv2.COLOR_BGR2RGB))
-                tensor_img = transform(pil_img).unsqueeze(0)
+            # Card aspect ratio range (Vertical portrait or horizontal landscape)
+            if 0.30 <= aspect_ratio <= 2.80:
+                # Extract 3 Candidate Crops:
+                # Crop 1: Top-Left Corner Index (0-30% W x 0-35% H)
+                c_w = max(10, int(bw * 0.30))
+                c_h = max(10, int(bh * 0.35))
+                crop1 = frame[y:y+c_h, x:x+c_w]
                 
-                with torch.no_grad():
-                    rank_logits, suit_logits = model(tensor_img)
-                    rank_probs = torch.softmax(rank_logits, dim=1)[0]
-                    suit_probs = torch.softmax(suit_logits, dim=1)[0]
-                    
-                    r_idx = torch.argmax(rank_probs).item()
-                    s_idx = torch.argmax(suit_probs).item()
-                    
-                    r_conf = rank_probs[r_idx].item()
-                    s_conf = suit_probs[s_idx].item()
-                    conf = (r_conf + s_conf) / 2.0
-                    
-                    r_name = RANK_NAMES[r_idx]
-                    s_name = SUIT_NAMES[s_idx]
-                    card_name = f"{r_name} {s_name}"
-                    
-                if conf >= 0.65:
-                    # Draw green bounding box on frame
-                    annotated_frame = frame.copy()
-                    cv2.rectangle(annotated_frame, (x, y), (x + bw, y + bh), (0, 255, 0), 3)
-                    cv2.putText(annotated_frame, f"{card_name} ({conf*100:.0f}%)", (x, max(25, y - 10)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    
-                    # Crop Card & Base64 Encode
+                # Crop 2: Top-Right Corner Index (70-100% W x 0-35% H)
+                tr_x = max(0, x + bw - c_w)
+                crop2_raw = frame[y:y+c_h, tr_x:tr_x+c_w]
+                crop2 = cv2.flip(crop2_raw, 1) if crop2_raw.size > 0 else None
+                
+                best_conf = 0.0
+                best_label = None
+                best_crop_img = None
+                
+                for crop in [crop1, crop2]:
+                    if crop is not None and crop.shape[0] > 8 and crop.shape[1] > 8:
+                        pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                        tensor_img = transform(pil_img).unsqueeze(0)
+                        
+                        with torch.no_grad():
+                            rank_logits, suit_logits = model(tensor_img)
+                            rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                            suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                            
+                            r_idx = torch.argmax(rank_probs).item()
+                            s_idx = torch.argmax(suit_probs).item()
+                            
+                            r_conf = rank_probs[r_idx].item()
+                            s_conf = suit_probs[s_idx].item()
+                            conf = (r_conf + s_conf) / 2.0
+                            
+                            if conf > best_conf:
+                                best_conf = conf
+                                best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                                best_crop_img = crop
+                                
+                if best_conf >= 0.55 and best_label is not None:
+                    # Draw green bounding box & label on card crop
                     card_crop = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
+                    cv2.rectangle(card_crop, (0, 0), (card_crop.shape[1]-1, card_crop.shape[0]-1), (0, 255, 0), 3)
+                    cv2.putText(card_crop, best_label, (5, max(18, card_crop.shape[0] - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                    
                     _, crop_buffer = cv2.imencode('.jpg', card_crop)
                     crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
                     
                     raw_detections.append({
                         'timestamp': float(timestamp),
                         'frame_idx': frame_idx,
-                        'card_name': card_name,
-                        'confidence': float(conf),
+                        'card_name': best_label,
+                        'confidence': float(best_conf),
                         'crop_base64': crop_base64,
                         'box': (x, y, bw, bh)
                     })
 
     cap.release()
     
-    # Debounce / Filter spatially and temporally
+    # Precise Multi-Card Fast Deal Clustering (80ms min inter-card gap)
     card_events = []
     last_emitted_box = None
     last_emitted_time = -999.0
@@ -162,13 +173,15 @@ def analyze_video_with_crops(video_path, total_hands=3):
         timestamp = det['timestamp']
         x, y, bw, bh = det['box']
         
-        if (timestamp - last_emitted_time) > 0.35:
+        # 80ms minimum gap allows tracking fast deals without missing cards!
+        if (timestamp - last_emitted_time) >= 0.08:
             should_emit = True
             if last_emitted_box is not None:
                 lx, ly, lw, lh = last_emitted_box
                 dx = abs((x + bw/2.0) - (lx + lw/2.0))
                 dy = abs((y + bh/2.0) - (ly + lh/2.0))
-                if dx < width * 0.10 and dy < height * 0.10:
+                # Only suppress if exact same card box position within 50ms
+                if dx < width * 0.06 and dy < height * 0.06 and (timestamp - last_emitted_time) < 0.18:
                     should_emit = False
                     
             if should_emit:
@@ -176,7 +189,7 @@ def analyze_video_with_crops(video_path, total_hands=3):
                 last_emitted_box = (x, y, bw, bh)
                 last_emitted_time = timestamp
                 
-    # Group card events into Player Hands Matrix
+    # Group card events into Player Hands Matrix (Nhóm #1, Nhóm #2, Nhóm #3)
     hands_matrix = []
     for h in range(1, total_hands + 1):
         hands_matrix.append({"handIndex": h, "cards": []})
@@ -205,4 +218,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_with_crops(v_path, t_hands)
+        analyze_video_multi_candidate(v_path, t_hands)
