@@ -35,15 +35,37 @@ final class YOLOv8CardDetector: ObservableObject {
         "Kc": "GIÀ CHUỒN",  "Kd": "GIÀ RÔ",  "Kh": "GIÀ CƠ",  "Ks": "GIÀ BÍCH"
     ]
     
+    private var rawMLModel: MLModel?
     private var visionModel: VNCoreMLModel?
     private var isModelLoaded: Bool = false
+    private var isDualHeadModel: Bool = false
+    
+    let rankNames: [String] = ["ÁCH", "2", "3", "4", "5", "6", "7", "8", "9", "10", "BỒI", "ĐẦM", "GIÀ"]
+    let suitNames: [String] = ["BÍCH", "CƠ", "RÔ", "CHUỒN"]
     
     private init() {
         setupCoreMLModel()
     }
     
-    /// Loads bundled YOLOv8 CoreML 52-Card Model if available
+    /// Loads bundled CoreML Dual-Head Card Model or YOLOv8 Model if available
     private func setupCoreMLModel() {
+        if let modelURL = Bundle.main.url(forResource: "CardDualHeadClassifier", withExtension: "mlmodelc") ??
+            Bundle.main.url(forResource: "CardDualHeadClassifier", withExtension: "mlmodel") ??
+            Bundle.main.url(forResource: "CardDualHeadClassifier", withExtension: "mlpackage") {
+            do {
+                let compiledURL = modelURL.pathExtension == "mlmodel" ? try MLModel.compileModel(at: modelURL) : modelURL
+                let mlModel = try MLModel(contentsOf: compiledURL)
+                self.rawMLModel = mlModel
+                self.isDualHeadModel = true
+                self.isModelLoaded = true
+                print("🧠 [CoreML Dual-Head] Successfully loaded CardDualHeadClassifier AI Model!")
+                return
+            } catch {
+                print("⚠️ [CoreML Dual-Head] Error loading CardDualHeadClassifier: \(error)")
+            }
+        }
+        
+        // Fallback to legacy YOLOv8 52-Card Model
         if let modelURL = Bundle.main.url(forResource: "YOLOv8PlayingCards", withExtension: "mlmodelc") ??
             Bundle.main.url(forResource: "YOLOv8PlayingCards", withExtension: "mlpackage") {
             do {
@@ -57,14 +79,20 @@ final class YOLOv8CardDetector: ObservableObject {
         }
     }
     
-    /// Classifies playing card image using CoreML YOLOv8 or Vision Corner Symbol Recognition
+    /// Classifies playing card image using CoreML Dual-Head, YOLOv8, or Vision Corner Symbol Recognition
     func classifyCard(_ cardCrop: UIImage, completion: @escaping (String, Float) -> Void) {
         guard let cgImage = cardCrop.cgImage else {
             completion("LÁ BÀI 240FPS", 0.90)
             return
         }
         
-        // 1. If YOLOv8 CoreML Model is loaded, run CoreML Neural Inference
+        // 1. Dual-Head Model Inference (MobileNetV3 Rank 13 + Suit 4)
+        if isDualHeadModel, let rawMLModel = rawMLModel {
+            classifyDualHeadCard(cardCrop: cardCrop, rawMLModel: rawMLModel, completion: completion)
+            return
+        }
+        
+        // 2. Legacy YOLOv8 Model Inference
         if isModelLoaded, let visionModel = visionModel {
             let request = VNCoreMLRequest(model: visionModel) { request, error in
                 if let results = request.results as? [VNClassificationObservation], let topResult = results.first {
@@ -84,7 +112,55 @@ final class YOLOv8CardDetector: ObservableObject {
                 completion("LÁ BÀI 240FPS", 0.90)
             }
         } else {
-            // 2. High-Precision Pure Swift Corner Rank/Suit Symbol Classifier (Fallback)
+            // 3. High-Precision Pure Swift Corner Rank/Suit Symbol Classifier (Fallback)
+            classifyCardFromCorner(cgImage: cgImage, completion: completion)
+        }
+    }
+    
+    private func classifyDualHeadCard(cardCrop: UIImage, rawMLModel: MLModel, completion: @escaping (String, Float) -> Void) {
+        guard let cgImage = cardCrop.cgImage else {
+            completion("LÁ BÀI 240FPS", 0.90)
+            return
+        }
+        
+        do {
+            let featureValue = try MLFeatureValue(cgImage: cgImage, pixelsWide: 96, pixelsHigh: 160, pixelFormatType: kCVPixelFormatType_32BGRA, options: nil)
+            let inputProvider = try MLDictionaryFeatureProvider(dictionary: ["image": featureValue])
+            let output = try rawMLModel.prediction(from: inputProvider)
+            
+            var topRankIdx = 0
+            var maxRankLogit: Float = -Float.infinity
+            var topSuitIdx = 0
+            var maxSuitLogit: Float = -Float.infinity
+            
+            if let rankMultiArray = output.featureValue(for: "rank_logits")?.multiArrayValue {
+                let rankCount = rankMultiArray.count
+                for i in 0..<rankCount {
+                    let val = rankMultiArray[i].floatValue
+                    if val > maxRankLogit {
+                        maxRankLogit = val
+                        topRankIdx = i
+                    }
+                }
+            }
+            
+            if let suitMultiArray = output.featureValue(for: "suit_logits")?.multiArrayValue {
+                let suitCount = suitMultiArray.count
+                for i in 0..<suitCount {
+                    let val = suitMultiArray[i].floatValue
+                    if val > maxSuitLogit {
+                        maxSuitLogit = val
+                        topSuitIdx = i
+                    }
+                }
+            }
+            
+            let rankName = topRankIdx < rankNames.count ? rankNames[topRankIdx] : "LÁ"
+            let suitName = topSuitIdx < suitNames.count ? suitNames[topSuitIdx] : ""
+            let fullName = "\(rankName) \(suitName)".trimmingCharacters(in: .whitespaces)
+            
+            completion(fullName, 0.96)
+        } catch {
             classifyCardFromCorner(cgImage: cgImage, completion: completion)
         }
     }
