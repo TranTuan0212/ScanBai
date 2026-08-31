@@ -80,24 +80,55 @@ final class CardSlowMoSlicer: ObservableObject {
         }
     }
     
-    /// Processes incoming frame with cropped card surface
-    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.95) {
+    /// Processes incoming detection result with multi-frame track accumulation
+    func processDetectionResult(_ result: CardDetectionResult?) {
         guard isDealingActive else { return }
         
+        guard let detection = result, let image = detection.cardImage, detection.cardConfidence >= 0.70 else {
+            processFrameNoCard()
+            return
+        }
+        
         let now = Date()
-        guard now.timeIntervalSince(lastEmitTime) >= 0.35 else { return }
+        guard now.timeIntervalSince(lastEmitTime) >= 0.28 else { return }
         
         consecutiveFrameCount += 1
         absentFrameCount = 0
         lastSeenTime = now
         activeFrames.append(image)
         
-        if activeFrames.count > 20 {
+        if activeFrames.count > 15 {
             activeFrames.removeFirst()
         }
         
-        // Instant Fast Motion Deal Trigger: 1-frame (~4ms) is enough to capture fast dealing swipes!
-        if consecutiveFrameCount >= 1 {
+        // Trigger slot emission when track is confirmed (>= 2 hits, good visibility or corner hit)
+        if detection.isConfirmed || consecutiveFrameCount >= 2 {
+            isCardActive = true
+            
+            if !hasSentCurrentCardSlot {
+                let sharpestImage = image // CardDetector already stores and updates track.bestFrame!
+                extractAndEmitCard(sharpestImage, customLabel: detection.cardName)
+            }
+        }
+    }
+    
+    /// Processes incoming frame (legacy fallback)
+    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.95) {
+        guard isDealingActive else { return }
+        
+        let now = Date()
+        guard now.timeIntervalSince(lastEmitTime) >= 0.28 else { return }
+        
+        consecutiveFrameCount += 1
+        absentFrameCount = 0
+        lastSeenTime = now
+        activeFrames.append(image)
+        
+        if activeFrames.count > 15 {
+            activeFrames.removeFirst()
+        }
+        
+        if consecutiveFrameCount >= 2 {
             isCardActive = true
             
             if !hasSentCurrentCardSlot {
@@ -200,7 +231,7 @@ final class CardSlowMoSlicer: ObservableObject {
         return pixelCount > 0 ? Float(laplacianSum / Double(pixelCount)) : 0.0
     }
     
-    private func extractAndEmitCard(_ sharpestImage: UIImage) {
+    private func extractAndEmitCard(_ sharpestImage: UIImage, customLabel: String? = nil) {
         guard !hasSentCurrentCardSlot else { return }
         
         let maxHands = totalHands > 0 ? totalHands : 3
@@ -246,6 +277,7 @@ final class CardSlowMoSlicer: ObservableObject {
         let imageBase64 = jpegData.base64EncodedString()
         
         onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
-        print("🃟 [iOS Fast Slicer] Emitted card #\(totalDealtCardsGlobal) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
+        let labelInfo = customLabel ?? "Card #\(totalDealtCardsGlobal)"
+        print("🃟 [iOS Fast Slicer] Emitted \(labelInfo) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }

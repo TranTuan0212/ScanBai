@@ -64,7 +64,7 @@ struct LiveView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.seal.fill")
                                 .font(.system(size: 10))
-                            Text("LÁ BÀI 240FPS")
+                            Text(cardDetector.lastDetectedCard ?? "LÁ BÀI")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                         }
                         .foregroundColor(.black)
@@ -331,14 +331,9 @@ struct LiveView: View {
                         }
                     }
                     
-                    // 2. Full 240 FPS AI Motion & Card Slicer processing with DYNAMIC ORIENTATION!
+                    // 2. Progressive Multi-Frame Tracking & Card Slicer processing
                     self.cardDetector.processPixelBuffer(pixelBuffer, orientation: orientation) { result in
-                        if let zoomedCrop = result?.cardImage, (result?.confidence ?? 0.0) >= 0.70 {
-                            // Pass the zoomed-in ROI photo focusing on card & hand!
-                            self.cardSlicer.processFrame(zoomedCrop, whitePaperRatio: 0.50, confidence: result?.confidence ?? 0.98)
-                        } else {
-                            self.cardSlicer.processFrameNoCard()
-                        }
+                        self.cardSlicer.processDetectionResult(result)
                     }
                 }
             }

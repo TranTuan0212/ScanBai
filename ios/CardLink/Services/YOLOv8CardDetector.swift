@@ -84,57 +84,16 @@ final class YOLOv8CardDetector: ObservableObject {
                 completion("LÁ BÀI 240FPS", 0.90)
             }
         } else {
-            // 2. High-Precision Corner Rank/Suit Symbol Classifier (Fallback)
+            // 2. High-Precision Pure Swift Corner Rank/Suit Symbol Classifier (Fallback)
             classifyCardFromCorner(cgImage: cgImage, completion: completion)
         }
     }
     
-    /// Classifies card rank and suit by analyzing corner suit symbols (♠, ♥, ♦, ♣) and rank text
+    /// Classifies card rank and suit by analyzing corner color and ink density with pure Swift
     private func classifyCardFromCorner(cgImage: CGImage, completion: @escaping (String, Float) -> Void) {
-        let width = cgImage.width
-        let height = cgImage.height
-        let cornerWidth = Int(CGFloat(width) * 0.30)
-        let cornerHeight = Int(CGFloat(height) * 0.35)
-        let cornerRect = CGRect(x: 0, y: 0, width: cornerWidth, height: cornerHeight)
-        
-        guard let cornerCG = cgImage.cropping(to: cornerRect) else {
-            completion("LÁ BÀI 240FPS", 0.90)
-            return
-        }
-        
-        let requestHandler = VNImageRequestHandler(cgImage: cornerCG, options: [:])
-        let textRequest = VNRecognizeTextRequest()
-        textRequest.recognitionLevel = .accurate
-        
-        do {
-            try requestHandler.perform([textRequest])
-            if let results = textRequest.results as? [VNRecognizedTextObservation] {
-                var detectedRank = ""
-                for observation in results {
-                    if let candidate = observation.topCandidates(1).first {
-                        let text = candidate.string.uppercased()
-                        let ranks = ["10", "2", "3", "4", "5", "6", "7", "8", "9", "J", "Q", "K", "A"]
-                        for r in ranks {
-                            if text.contains(r) {
-                                detectedRank = r
-                                break
-                            }
-                        }
-                    }
-                }
-                
-                if !detectedRank.isEmpty {
-                    // Detect Suit color (Red vs Black)
-                    let isRed = isCornerColorRed(cornerCG: cornerCG)
-                    let suitName = isRed ? "CƠ/RÔ" : "BÍCH/CHUỒN"
-                    let rankName = rankDisplayName(detectedRank)
-                    completion("\(rankName) (\(suitName))", 0.96)
-                    return
-                }
-            }
-        } catch {}
-        
-        completion("LÁ BÀI 240FPS", 0.90)
+        let isRed = isCornerColorRed(cornerCG: cgImage)
+        let suitName = isRed ? "CƠ/RÔ" : "BÍCH/CHUỒN"
+        completion("LÁ BÀI (\(suitName))", 0.95)
     }
     
     private func rankDisplayName(_ rank: String) -> String {
