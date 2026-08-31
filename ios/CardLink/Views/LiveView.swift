@@ -312,13 +312,6 @@ struct LiveView: View {
         }
         .onAppear {
             setupSlicerCallbacks()
-            cameraManager.onVolumeButtonPressed = {
-                DispatchQueue.main.async {
-                    self.cardSlicer.toggleDealingMode()
-                    let modeText = self.cardSlicer.isDealingActive ? "🔴 ĐANG QUAY SLOW-MO 240FPS (VÁN MỚI)" : "⚡ KẾT THÚC VÁN - ĐÃ LỌC FRAME NÉT NHẤT GỬI SERVER"
-                    self.cardDetector.debugLogText = "🔊 [PHÍM VOLUME +] \(modeText)"
-                }
-            }
             cameraManager.setupAndStartSession { pixelBuffer, orientation in
                 autoreleasepool {
                     guard let uiImage = self.pixelBufferToUIImage(pixelBuffer) else { return }
@@ -356,12 +349,12 @@ struct LiveView: View {
     }
     
     private func setupSlicerCallbacks() {
-        cardSlicer.onCardExtracted = { totalSlot, vanIdx, handIdx, cardIdx, isRoundComplete, imageBase64 in
+        cardSlicer.onCardExtracted = { totalSlot, vanIdx, handIdx, cardIdx, isRoundComplete, imageBase64, cardName in
             if isLiveActive {
-                let cardLabel = "VÁN #\(vanIdx) | TỤ #\(handIdx) - LÁ #\(cardIdx)"
+                let fullLabel = "\(cardName) (VÁN #\(vanIdx) | TỤ #\(handIdx) - LÁ #\(cardIdx))"
                 socketManager.sendCardDetected(
                     sessionId: sessionId,
-                    label: cardLabel,
+                    label: fullLabel,
                     imageBase64: imageBase64
                 )
             }

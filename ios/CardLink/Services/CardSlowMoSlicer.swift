@@ -32,9 +32,9 @@ final class CardSlowMoSlicer: ObservableObject {
     private var lastEmitTime: Date = Date.distantPast
     private var activeFrames: [UIImage] = []
     
-    var onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)?
+    var onCardExtracted: ((Int, Int, Int, Int, Bool, String, String) -> Void)?
     
-    init(totalHands: Int = 3, onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)? = nil) {
+    init(totalHands: Int = 3, onCardExtracted: ((Int, Int, Int, Int, Bool, String, String) -> Void)? = nil) {
         self.totalHands = totalHands
         self.onCardExtracted = onCardExtracted
         updateStatusBanner()
@@ -273,11 +273,8 @@ final class CardSlowMoSlicer: ObservableObject {
             self.updateStatusBanner()
         }
         
-        guard let jpegData = sharpestImage.jpegData(compressionQuality: 0.65) else { return }
-        let imageBase64 = jpegData.base64EncodedString()
-        
-        onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64)
-        let labelInfo = customLabel ?? "Card #\(totalDealtCardsGlobal)"
-        print("🃟 [iOS Fast Slicer] Emitted \(labelInfo) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
+        let cardName = customLabel ?? "LÁ BÀI"
+        onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64, cardName)
+        print("🃟 [iOS Fast Slicer] Emitted \(cardName) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
     }
 }
