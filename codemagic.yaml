@@ -27,8 +27,14 @@ workflows:
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             build
             
-          # Copy compiled CardLink.app into Payload and package IPA
+          # Copy compiled CardLink.app into Payload and compile CoreML AI Model
           cp -r build/DerivedData/Build/Products/Release-iphoneos/CardLink.app build/Payload/
+          
+          if [ -f "CardDualHeadClassifier.mlmodel" ]; then
+            echo "🧠 Compiling CoreML AI Model into CardLink.app bundle..."
+            xcrun coremlc compile CardDualHeadClassifier.mlmodel build/Payload/CardLink.app/
+          fi
+          
           cd build
           zip -r CardLink_Broadcast_v1.0.ipa Payload
           ls -lh CardLink_Broadcast_v1.0.ipa
