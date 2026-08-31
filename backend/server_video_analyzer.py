@@ -54,7 +54,11 @@ def load_trained_model():
     model.eval()
     return model
 
-def analyze_video_fast(video_path, total_hands=3):
+def compute_sharpness(img_bgr):
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
+
+def analyze_video_event_driven(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -63,7 +67,6 @@ def analyze_video_fast(video_path, total_hands=3):
     cap = cv2.VideoCapture(video_path)
     
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
@@ -73,7 +76,6 @@ def analyze_video_fast(video_path, total_hands=3):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Auto-detect if video needs 90° Clockwise Rotation
     need_rotation = False
     ret, sample_frame = cap.read()
     if ret:
@@ -89,129 +91,144 @@ def analyze_video_fast(video_path, total_hands=3):
                     
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     
+    # ---------------------------------------------------------
+    # STAGE 1: Ultra-Fast Motion Trigger (OpenCV HSV Mask Only)
+    # Detects ONLY when a card appears on table (0.5s - 1.0s window)
+    # ---------------------------------------------------------
+    detected_time_windows = [] # Array of (start_frame, end_frame)
     frame_idx = 0
-    raw_detections = []
+    in_trigger = False
+    trigger_start_frame = 0
     
-    # Adaptive Frame Stride: Sample every 2 frames if video is long (> 150 frames) for 10x speedup
-    frame_stride = 2 if total_frames > 150 else 1
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_idx += 1
+        
+        if need_rotation:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            
+        height, width, _ = frame.shape
+        scale = 320.0 / float(width) if width > 320 else 1.0
+        proc_frame = cv2.resize(frame, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_NEAREST)
+        
+        hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
+        white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
+        cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        has_card_contour = False
+        frame_area = proc_frame.shape[0] * proc_frame.shape[1]
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area >= frame_area * 0.005 and area <= frame_area * 0.40:
+                _, _, bw, bh = cv2.boundingRect(c)
+                if 0.35 <= (float(bw)/float(bh)) <= 2.50:
+                    has_card_contour = True
+                    break
+                    
+        if has_card_contour:
+            if not in_trigger:
+                in_trigger = True
+                trigger_start_frame = frame_idx
+        else:
+            if in_trigger:
+                in_trigger = False
+                trigger_end_frame = frame_idx
+                # Only keep windows where a card was present for >= 2 frames
+                if (trigger_end_frame - trigger_start_frame) >= 2:
+                    detected_time_windows.append((trigger_start_frame, trigger_end_frame))
+                    
+    if in_trigger:
+        detected_time_windows.append((trigger_start_frame, frame_idx))
+
+    # ---------------------------------------------------------
+    # STAGE 2: Sharpness Keyframe Picker & AI Classifier
+    # Selects ONLY the single SHARPEST frame per card window!
+    # Runs AI Neural Network ONLY ONCE PER CARD!
+    # ---------------------------------------------------------
+    card_events = []
     
     with torch.inference_mode():
-        while cap.isOpened():
-            ret, full_frame = cap.read()
-            if not ret:
-                break
-            frame_idx += 1
+        for window_idx, (start_f, end_f) in enumerate(detected_time_windows):
+            best_sharpness = -1.0
+            best_frame_data = None
+            best_box = None
+            best_crop = None
+            best_timestamp = 0.0
             
-            if frame_idx % frame_stride != 0:
-                continue
+            # Scan frames in this trigger window to find the sharpest keyframe
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_f - 1)
+            for current_f in range(start_f, end_f + 1):
+                ret, frame = cap.read()
+                if not ret: break
                 
-            timestamp = frame_idx / fps
-            
-            if need_rotation:
-                full_frame = cv2.rotate(full_frame, cv2.ROTATE_90_CLOCKWISE)
-                
-            height, width, _ = full_frame.shape
-            
-            # Downscale processing resolution to max width 640 for 5x faster OpenCV contours
-            scale = 640.0 / float(width) if width > 640 else 1.0
-            if scale < 1.0:
-                proc_w = int(width * scale)
-                proc_h = int(height * scale)
-                proc_frame = cv2.resize(full_frame, (proc_w, proc_h), interpolation=cv2.INTER_NEAREST)
-            else:
-                proc_frame = full_frame
-                proc_w, proc_h = width, height
-                scale = 1.0
-                
-            hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
-            white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
-            
-            contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            frame_area = proc_w * proc_h
-            
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area < frame_area * 0.004 or area > frame_area * 0.40:
-                    continue
+                if need_rotation:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                     
-                px, py, pbw, pbh = cv2.boundingRect(cnt)
-                aspect_ratio = float(pbw) / float(pbh)
+                height, width, _ = frame.shape
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
+                cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
-                # Filter strictly for card aspect ratio before running neural network
-                if 0.35 <= aspect_ratio <= 2.50:
-                    # Map box back to full resolution frame
-                    x = int(px / scale)
-                    y = int(py / scale)
-                    bw = int(pbw / scale)
-                    bh = int(pbh / scale)
-                    
-                    c_w = max(14, int(bw * 0.28))
-                    c_h = max(22, int(c_w / 0.60)) # Preserves 0.60 aspect ratio!
-                    
-                    crop_tl = full_frame[y:y+c_h, x:x+c_w]
-                    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-                        pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
-                        tensor_img = transform(pil_img).unsqueeze(0)
-                        
-                        rank_logits, suit_logits = model(tensor_img)
-                        rank_probs = torch.softmax(rank_logits, dim=1)[0]
-                        suit_probs = torch.softmax(suit_logits, dim=1)[0]
-                        
-                        r_idx = torch.argmax(rank_probs).item()
-                        s_idx = torch.argmax(suit_probs).item()
-                        
-                        r_conf = rank_probs[r_idx].item()
-                        s_conf = suit_probs[s_idx].item()
-                        conf = (r_conf + s_conf) / 2.0
-                        
-                        if conf >= 0.65:
-                            card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                            
-                            # Draw green bounding box & label on card crop
-                            card_crop = full_frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
-                            if card_crop.size > 0:
-                                cv2.rectangle(card_crop, (0, 0), (card_crop.shape[1]-1, card_crop.shape[0]-1), (0, 255, 0), 3)
-                                cv2.putText(card_crop, f"{card_name} ({conf*100:.0f}%)", (5, max(18, card_crop.shape[0] - 8)),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                frame_area = width * height
+                for c in cnts:
+                    area = cv2.contourArea(c)
+                    if area >= frame_area * 0.005 and area <= frame_area * 0.40:
+                        x, y, bw, bh = cv2.boundingRect(c)
+                        if 0.35 <= (float(bw)/float(bh)) <= 2.50:
+                            card_roi = frame[y:y+bh, x:x+bw]
+                            sharpness = compute_sharpness(card_roi)
+                            if sharpness > best_sharpness:
+                                best_sharpness = sharpness
+                                best_frame_data = frame
+                                best_box = (x, y, bw, bh)
+                                best_crop = card_roi
+                                best_timestamp = current_f / fps
                                 
-                                _, crop_buffer = cv2.imencode('.jpg', card_crop)
-                                crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
-                                
-                                raw_detections.append({
-                                    'timestamp': float(timestamp),
-                                    'frame_idx': frame_idx,
-                                    'card_name': card_name,
-                                    'confidence': float(conf),
-                                    'crop_base64': crop_base64,
-                                    'box': (x, y, bw, bh)
-                                })
+            # Run AI Neural Network ONLY on the Sharpest Keyframe!
+            if best_frame_data is not None and best_box is not None:
+                x, y, bw, bh = best_box
+                c_w = max(14, int(bw * 0.28))
+                c_h = max(22, int(c_w / 0.60))
+                
+                crop_tl = best_frame_data[y:y+c_h, x:x+c_w]
+                if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
+                    pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+                    tensor_img = transform(pil_img).unsqueeze(0)
+                    
+                    rank_logits, suit_logits = model(tensor_img)
+                    rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                    suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                    
+                    r_idx = torch.argmax(rank_probs).item()
+                    s_idx = torch.argmax(suit_probs).item()
+                    
+                    r_conf = rank_probs[r_idx].item()
+                    s_conf = suit_probs[s_idx].item()
+                    conf = (r_conf + s_conf) / 2.0
+                    
+                    if conf >= 0.55:
+                        card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                        
+                        annotated_crop = best_crop.copy()
+                        cv2.rectangle(annotated_crop, (0, 0), (annotated_crop.shape[1]-1, annotated_crop.shape[0]-1), (0, 255, 0), 3)
+                        cv2.putText(annotated_crop, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated_crop.shape[0] - 8)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                        
+                        _, crop_buffer = cv2.imencode('.jpg', annotated_crop)
+                        crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                        
+                        card_events.append({
+                            'timestamp': float(best_timestamp),
+                            'card_name': card_name,
+                            'confidence': float(conf),
+                            'crop_base64': crop_base64
+                        })
 
     cap.release()
     
-    # Fast Deal Debounce & Deduplication (80ms min inter-card gap)
-    card_events = []
-    last_emitted_box = None
-    last_emitted_time = -999.0
-    
-    for det in raw_detections:
-        timestamp = det['timestamp']
-        x, y, bw, bh = det['box']
-        
-        if (timestamp - last_emitted_time) >= 0.08:
-            should_emit = True
-            if last_emitted_box is not None:
-                lx, ly, lw, lh = last_emitted_box
-                dx = abs((x + bw/2.0) - (lx + lw/2.0))
-                dy = abs((y + bh/2.0) - (ly + lh/2.0))
-                if dx < width * 0.06 and dy < height * 0.06 and (timestamp - last_emitted_time) < 0.18:
-                    should_emit = False
-                    
-            if should_emit:
-                card_events.append(det)
-                last_emitted_box = (x, y, bw, bh)
-                last_emitted_time = timestamp
-                
-    # Group card events into Player Hands Matrix (Nhóm #1, Nhóm #2, Nhóm #3)
+    # Group card events into Player Hands Matrix
     hands_matrix = []
     for h in range(1, total_hands + 1):
         hands_matrix.append({"handIndex": h, "cards": []})
@@ -240,4 +257,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_fast(v_path, t_hands)
+        analyze_video_event_driven(v_path, t_hands)
