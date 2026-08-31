@@ -372,20 +372,10 @@ final class CardDetector: ObservableObject {
     private func updateTracksWithCandidates(candidates: [DetectedCandidate]) -> CardTrack? {
         let now = Date()
         
-        // 1. Predict next positions for all existing tracks
-        for track in activeTracks {
-            track.boundingBox = CGRect(
-                x: track.boundingBox.origin.x + track.velocity.x,
-                y: track.boundingBox.origin.y + track.velocity.y,
-                width: track.boundingBox.width,
-                height: track.boundingBox.height
-            )
-        }
-        
         var matchedTrackIndices = Set<Int>()
         var matchedCandidateIndices = Set<Int>()
         
-        // 2. Match incoming candidates to existing tracks using Centroid Distance + IOU
+        // 1. Match incoming candidates to existing tracks using Centroid Distance + IOU
         for (cIdx, candidate) in candidates.enumerated() {
             var bestTrackIdx: Int? = nil
             var minDistance: CGFloat = 0.25 // Matching threshold
@@ -408,11 +398,11 @@ final class CardDetector: ObservableObject {
                 let oldCenter = CGPoint(x: track.boundingBox.midX, y: track.boundingBox.midY)
                 let newCenter = CGPoint(x: candidate.box.midX, y: candidate.box.midY)
                 
-                // Update velocity vector
+                // Update velocity vector for trajectory prediction
                 track.updateVelocity(newCenter: newCenter, oldCenter: oldCenter)
                 
-                // Smooth bounding box (Anti-Jitter EMA)
-                let alpha: CGFloat = 0.25
+                // Butter-Smooth Anti-Jitter EMA Interpolation (alpha = 0.20 for silky smooth tracking)
+                let alpha: CGFloat = 0.20
                 track.boundingBox = CGRect(
                     x: track.boundingBox.origin.x * (1 - alpha) + candidate.box.origin.x * alpha,
                     y: track.boundingBox.origin.y * (1 - alpha) + candidate.box.origin.y * alpha,
