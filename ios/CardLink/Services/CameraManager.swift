@@ -122,9 +122,10 @@ final class CameraManager: NSObject, ObservableObject {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
         
-        if captureSession.canSetSessionPreset(.hd1920x1080) {
-            captureSession.sessionPreset = .hd1920x1080
-            DispatchQueue.main.async { self.activeResolution = "1080p Slow-Mo (240 FPS)" }
+        // CRITICAL FOR APPLE 240 FPS: sessionPreset MUST be set to .inputPriority to allow custom activeFormat!
+        if captureSession.canSetSessionPreset(.inputPriority) {
+            captureSession.sessionPreset = .inputPriority
+            DispatchQueue.main.async { self.activeResolution = "1080p 240 FPS Ultra-Sharp" }
         } else {
             captureSession.sessionPreset = .high
         }
@@ -263,9 +264,13 @@ final class CameraManager: NSObject, ObservableObject {
             var maxFPS: Double = 0
             
             for format in device.formats {
+                let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                let is1080p = (dims.width == 1920 && dims.height == 1080) || (dims.width == 1080 && dims.height == 1920)
+                
                 for range in format.videoSupportedFrameRateRanges {
-                    if range.maxFrameRate > maxFPS {
-                        maxFPS = range.maxFrameRate
+                    let rate = range.maxFrameRate
+                    if rate > maxFPS || (rate == maxFPS && is1080p) {
+                        maxFPS = rate
                         bestFormat = format
                     }
                 }
@@ -277,12 +282,19 @@ final class CameraManager: NSObject, ObservableObject {
                 device.activeVideoMinFrameDuration = targetFrameDuration
                 device.activeVideoMaxFrameDuration = targetFrameDuration
                 
-                print("🚀 [iOS Camera] LOCKED AT MAXIMUM \(Int(maxFPS)) FPS")
+                print("🚀 [iOS Camera] REAL HARDWARE UNLOCKED: \(Int(maxFPS)) FPS")
                 DispatchQueue.main.async { self.currentFPS = maxFPS }
             }
             
+            // Ultra-Sharp Focus & Shutter Optimization (Fixes Camera Blur)
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
             if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
+            }
+            if device.isSmoothAutoFocusSupported {
+                device.isSmoothAutoFocusEnabled = false // Instant crisp sharp focus without blur transition
             }
             if device.isExposureModeSupported(.continuousAutoExposure) {
                 device.exposureMode = .continuousAutoExposure
@@ -295,9 +307,17 @@ final class CameraManager: NSObject, ObservableObject {
                 if connection.isVideoOrientationSupported {
                     connection.videoOrientation = self.currentVideoOrientation
                 }
+                // Turn off heavy digital video stabilization at 240 FPS to prevent optical motion blur
                 if connection.isVideoStabilizationSupported {
-                    connection.preferredVideoStabilizationMode = .standard
+                    connection.preferredVideoStabilizationMode = .off
                 }
+            }
+            
+            device.unlockForConfiguration()
+        } catch {
+            print("❌ [iOS Camera] Configuration failed: \(error)")
+        }
+    }
             }
             
             device.unlockForConfiguration()
