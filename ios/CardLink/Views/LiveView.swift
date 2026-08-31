@@ -342,8 +342,16 @@ struct LiveView: View {
             setupSlicerCallbacks()
             let token = APIService.shared.getAuthToken() ?? ""
             socketManager.connect(token: token)
+            
+            // Listen for Physical Volume (+) Button presses to start/stop 240 FPS Slow-Mo Deal Round!
+            VolumeButtonHandler.shared.startListening {
+                if self.isLiveActive {
+                    self.cardSlicer.toggleDealingMode()
+                }
+            }
         }
         .onDisappear {
+            VolumeButtonHandler.shared.stopListening()
             stopLiveSession()
         }
     }

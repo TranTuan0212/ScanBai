@@ -18,6 +18,7 @@
 		110100092C12345600000001 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110100092C12345600000000 /* LoginView.swift */; };
 		1101000A2C12345600000001 /* SessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101000A2C12345600000000 /* SessionPickerView.swift */; };
 		1101001D2C12345600000001 /* DeviceUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101001D2C12345600000000 /* DeviceUtils.swift */; };
+		1101001E2C12345600000001 /* VolumeButtonHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101001E2C12345600000000 /* VolumeButtonHandler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +35,7 @@
 		1101000A2C12345600000000 /* SessionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/SessionPickerView.swift; sourceTree = "<group>"; };
 		1101000B2C12345600000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1101001D2C12345600000000 /* DeviceUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/DeviceUtils.swift; sourceTree = "<group>"; };
+		1101001E2C12345600000000 /* VolumeButtonHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/VolumeButtonHandler.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +63,7 @@
 				110100092C12345600000000 /* LoginView.swift */,
 				1101000A2C12345600000000 /* SessionPickerView.swift */,
 				1101001D2C12345600000000 /* DeviceUtils.swift */,
+				1101001E2C12345600000000 /* VolumeButtonHandler.swift */,
 				1101000B2C12345600000000 /* Info.plist */,
 				110100002C12345600000000 /* CardLink.app */,
 			);
@@ -135,6 +138,7 @@
 				110100092C12345600000001 /* LoginView.swift in Sources */,
 				1101000A2C12345600000001 /* SessionPickerView.swift in Sources */,
 				1101001D2C12345600000001 /* DeviceUtils.swift in Sources */,
+				1101001E2C12345600000001 /* VolumeButtonHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
