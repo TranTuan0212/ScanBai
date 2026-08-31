@@ -73,11 +73,11 @@ final class CardSlowMoSlicer: ObservableObject {
     private func updateStatusBanner() {
         let maxCardsInRound = totalHands * 3
         if !isDealingActive {
-            statusBannerText = "⏸️ ĐANG XỐC BÀI / SẤP BÀI (TẠM KHÓA GHI NHẬN)"
+            statusBannerText = "⏸️ TẠM KHÓA QUÉT TỰ ĐỘNG (BẤM VOLUME + ĐỂ BẮT ĐẦU)"
         } else if isRoundJustCompleted {
-            statusBannerText = "🏆 HOÀN THÀNH VÁN #\(gameRoundNumber) (\(maxCardsInRound)/\(maxCardsInRound) LÁ) -> CHUẨN BỊ VÁN TIẾP"
+            statusBannerText = "✅ HOÀN THÀNH PHIÊN #\(gameRoundNumber) (\(maxCardsInRound)/\(maxCardsInRound) MẪU) -> CHUẨN BỊ PHIÊN MỚI"
         } else {
-            statusBannerText = "🎴 ĐANG CHIA: TỤ #\(currentHandIndex)/\(totalHands) - LÁ #\(currentCardIndex)/3 (LÁ \(totalDealtCardsInRound + 1)/\(maxCardsInRound))"
+            statusBannerText = "📷 ĐANG QUÉT: NHÓM #\(currentHandIndex)/\(totalHands) - MẪU #\(currentCardIndex)/3 (MẪU \(totalDealtCardsInRound + 1)/\(maxCardsInRound))"
         }
     }
     

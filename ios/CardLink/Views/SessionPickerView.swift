@@ -27,18 +27,18 @@ struct SessionPickerView: View {
                         .font(.system(size: 56))
                         .foregroundColor(.yellow)
                     
-                    Text("TẠO PHIÊN PHÁT SÓNG")
+                    Text("KHỞI TẠO LUỒNG PHÁT SÓNG")
                         .font(.title2.bold())
                         .foregroundColor(.white)
                     
-                    Text("Thiết lập bàn bài & số tụ chơi")
+                    Text("Cấu hình thiết bị camera & luồng phân tích")
                         .font(.subheadline)
                         .foregroundColor(.gray)
                 }
                 
                 VStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Tên phiên bàn bài")
+                        Text("Tên phiên làm việc")
                             .font(.caption.bold())
                             .foregroundColor(.gray)
                         
@@ -50,15 +50,15 @@ struct SessionPickerView: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Số tụ chơi (Default: 3 tụ)")
+                        Text("Số nhóm phân tích (Default: 3 nhóm)")
                             .font(.caption.bold())
                             .foregroundColor(.gray)
                         
-                        Picker("Số tụ", selection: $totalRounds) {
-                            Text("2 Tụ").tag(2)
-                            Text("3 Tụ (Chuẩn)").tag(3)
-                            Text("4 Tụ").tag(4)
-                            Text("5 Tụ").tag(5)
+                        Picker("Số nhóm", selection: $totalRounds) {
+                            Text("2 Nhóm").tag(2)
+                            Text("3 Nhóm (Chuẩn)").tag(3)
+                            Text("4 Nhóm").tag(4)
+                            Text("5 Nhóm").tag(5)
                         }
                         .pickerStyle(.segmented)
                         .background(Color.white.opacity(0.1))

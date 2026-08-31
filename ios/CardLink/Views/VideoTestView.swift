@@ -200,10 +200,10 @@ struct VideoTestView: View {
                         .foregroundColor(.green)
                 }
                 
-                // List of Extracted Cards Grouped by Player Hands (Tụ 1, Tụ 2, Tụ 3)
+                // List of Extracted Cards Grouped by Object Groups (Nhóm 1, Nhóm 2, Nhóm 3)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("🎴 DANH SÁCH LÁ BÀI VÀ TỤ TRÍCH XUẤT (\(detectedCards.count) LÁ)")
+                        Text("📷 DANH SÁCH ĐỐI TƯỢNG PHÂN TÍCH (\(detectedCards.count) MẪU)")
                             .font(.system(size: 12, weight: .bold, design: .monospaced))
                             .foregroundColor(.yellow)
                         Spacer()
@@ -258,10 +258,10 @@ struct VideoTestView: View {
         }
     }
     
-    // Group detected cards by Player Hand (e.g. "🖐️ TỤ #1", "🖐️ TỤ #2", "🖐️ TỤ #3")
+    // Group detected cards by Object Group (e.g. "📷 NHÓM #1", "📷 NHÓM #2", "📷 NHÓM #3")
     private var groupedCardsByHand: [String: [DealtCardItem]] {
         Dictionary(grouping: detectedCards) { item in
-            "🖐️ TỤ #\(item.handIndex) (VÁN #\(item.vanIndex))"
+            "📷 NHÓM #\(item.handIndex) (PHIÊN #\(item.vanIndex))"
         }
     }
     
