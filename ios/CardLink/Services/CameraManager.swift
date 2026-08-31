@@ -28,35 +28,15 @@ final class CameraManager: NSObject, ObservableObject {
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "com.cardlink.camera.sessionQueue", qos: .userInitiated)
     
-    @Published var volumeTriggerCount: Int = 0
-    var onVolumeButtonPressed: (() -> Void)?
+    var onFrameCaptured: ((CVPixelBuffer, CGImagePropertyOrientation) -> Void)?
     
     override init() {
         super.init()
         setupOrientationObserver()
-        setupVolumeButtonListener()
     }
     
     deinit {
         NotificationCenter.default.removeObserver(self)
-        AVAudioSession.sharedInstance().removeObserver(self, forKeyPath: "outputVolume")
-    }
-    
-    /// Hardware Volume Button (+) Listener for instant 0ms deal session trigger
-    private func setupVolumeButtonListener() {
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.ambient, options: .mixWithOthers)
-        try? audioSession.setActive(true)
-        audioSession.addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
-    }
-    
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "outputVolume" {
-            DispatchQueue.main.async {
-                self.volumeTriggerCount += 1
-                self.onVolumeButtonPressed?()
-            }
-        }
     }
     
     /// Listen for physical iPhone rotation (Portrait, Landscape Left, Landscape Right)
@@ -396,6 +376,6 @@ final class CameraManager: NSObject, ObservableObject {
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrameCaptured?(pixelBuffer, cgImageOrientation)
+        self.onFrameCaptured?(pixelBuffer, self.cgImageOrientation)
     }
 }
