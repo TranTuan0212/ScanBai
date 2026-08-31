@@ -10,6 +10,7 @@
 import SwiftUI
 import PhotosUI
 import AVFoundation
+import UniformTypeIdentifiers
 
 struct DealtCardItem: Identifiable {
     let id = UUID()
