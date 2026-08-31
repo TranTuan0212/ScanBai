@@ -132,24 +132,35 @@ final class CardDetector: ObservableObject {
             
             // 1. Apple Vision Native Neural Rectangle Detector (Primary Card Locator)
             let rectRequest = VNDetectRectanglesRequest()
-            rectRequest.minimumAspectRatio = 0.40
-            rectRequest.maximumAspectRatio = 0.95
-            rectRequest.minimumSize = 0.06
-            rectRequest.maximumObservations = 3
+            rectRequest.minimumAspectRatio = 0.35
+            rectRequest.maximumAspectRatio = 0.98
+            rectRequest.minimumSize = 0.04
+            rectRequest.maximumObservations = 10 // Detect all 9-12 cards on table simultaneously
+            rectRequest.minimumConfidence = 0.50
             
             let handler = VNImageRequestHandler(ciImage: portraitCIImage, options: [:])
-            var visionCandidateBox: CGRect? = nil
+            var visionCandidates: [DetectedCandidate] = []
             
             try? handler.perform([rectRequest])
-            if let results = rectRequest.results, let topRect = results.first {
-                let boundingBox = topRect.boundingBox
-                // Convert Apple Vision normalized box (Origin Bottom-Left) to UIKit (Origin Top-Left)
-                visionCandidateBox = CGRect(
-                    x: boundingBox.origin.x,
-                    y: 1.0 - boundingBox.origin.y - boundingBox.height,
-                    width: boundingBox.width,
-                    height: boundingBox.height
-                )
+            if let results = rectRequest.results {
+                for rect in results {
+                    let bb = rect.boundingBox
+                    // Convert Apple Vision (Origin Bottom-Left) to UIKit (Origin Top-Left)
+                    let vBox = CGRect(
+                        x: bb.origin.x,
+                        y: 1.0 - bb.origin.y - bb.height,
+                        width: bb.width,
+                        height: bb.height
+                    )
+                    visionCandidates.append(DetectedCandidate(
+                        box: vBox,
+                        visibility: 1.0,
+                        cardConfidence: 0.98,
+                        inkScore: 0.05,
+                        redRatio: 0.02,
+                        blackRatio: 0.02
+                    ))
+                }
             }
 
             // 2. Extract Downsampled Pixel Grid Fallback
@@ -161,16 +172,9 @@ final class CardDetector: ObservableObject {
             
             var candidates = detectProgressiveCandidates(pixelData: pixelData, width: gridW, height: gridH)
             
-            // If Apple Vision detected a sharp card rectangle, prioritize it!
-            if let vBox = visionCandidateBox {
-                candidates.insert(DetectedCandidate(
-                    box: vBox,
-                    visibility: 1.0,
-                    cardConfidence: 0.98,
-                    inkScore: 0.05,
-                    redRatio: 0.02,
-                    blackRatio: 0.02
-                ), at: 0)
+            // Prioritize all Apple Vision detected card rectangles!
+            if !visionCandidates.isEmpty {
+                candidates.insert(contentsOf: visionCandidates, at: 0)
             }
             
             // 3. Multi-Frame Tracker & Predictor
@@ -383,7 +387,7 @@ final class CardDetector: ObservableObject {
                     // UIKit Top-Left Origin Normalized Bounding Box
                     let normBox = CGRect(
                         x: CGFloat(minX) / CGFloat(width),
-                        y: 1.0 - (CGFloat(maxY + 1) / CGFloat(height)),
+                        y: CGFloat(minY) / CGFloat(height),
                         width: CGFloat(boxW) / CGFloat(width),
                         height: CGFloat(boxH) / CGFloat(height)
                     )
