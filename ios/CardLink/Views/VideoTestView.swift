@@ -263,6 +263,9 @@ struct VideoTestView: View {
             reader.add(trackOutput)
             reader.startReading()
             
+            let transform = (try? await track.load(.preferredTransform)) ?? .identity
+            let videoCGOrientation = self.cgOrientationFromTransform(transform)
+            
             let slicer = CardSlowMoSlicer(totalHands: self.totalHands)
             slicer.onCardExtracted = { totalSlot, vanIdx, handIdx, cardIdx, isRoundComplete, imageBase64, cardName in
                 let newItem = DealtCardItem(
@@ -291,10 +294,10 @@ struct VideoTestView: View {
                 if frameIndex % 2 == 0 {
                     let currentRatio = Float(Double(frameIndex) / estimatedTotalFrames)
                     
-                    self.cardDetector.processPixelBuffer(pixelBuffer, orientation: .right) { result in
+                    self.cardDetector.processPixelBuffer(pixelBuffer, orientation: videoCGOrientation) { result in
                         slicer.processDetectionResult(result)
                         
-                        let uiImg = self.pixelBufferToUIImage(pixelBuffer)
+                        let uiImg = self.pixelBufferToUIImage(pixelBuffer, orientation: videoCGOrientation)
                         DispatchQueue.main.async {
                             self.progressRatio = min(1.0, currentRatio)
                             self.progressText = "ĐANG PHÂN TÍCH FRAME #\(frameIndex) (\(Int(min(1.0, currentRatio) * 100))%)..."
@@ -316,8 +319,22 @@ struct VideoTestView: View {
         }
     }
     
-    private func pixelBufferToUIImage(_ pixelBuffer: CVPixelBuffer) -> UIImage? {
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+    private func cgOrientationFromTransform(_ transform: CGAffineTransform) -> CGImagePropertyOrientation {
+        if transform.a == 0 && transform.b == 1.0 && transform.c == -1.0 && transform.d == 0 {
+            return .right
+        } else if transform.a == 0 && transform.b == -1.0 && transform.c == 1.0 && transform.d == 0 {
+            return .left
+        } else if transform.a == 1.0 && transform.b == 0 && transform.c == 0 && transform.d == 1.0 {
+            return .up
+        } else if transform.a == -1.0 && transform.b == 0 && transform.c == 0 && transform.d == -1.0 {
+            return .down
+        } else {
+            return .right
+        }
+    }
+    
+    private func pixelBufferToUIImage(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let ctx = CIContext(options: [.useSoftwareRenderer: false])
         guard let cgImage = ctx.createCGImage(ciImage, from: ciImage.extent) else { return nil }
         return UIImage(cgImage: cgImage)
