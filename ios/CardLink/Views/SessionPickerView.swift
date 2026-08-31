@@ -13,6 +13,7 @@ struct SessionPickerView: View {
     
     @State private var sessionTitle = "Phiên Bàn Live #1"
     @State private var totalRounds = 3
+    @State private var showVideoTestModal = false
     
     var body: some View {
         ZStack {
@@ -81,6 +82,26 @@ struct SessionPickerView: View {
                     .shadow(color: .yellow.opacity(0.4), radius: 8, x: 0, y: 4)
                 }
                 .padding(.horizontal, 32)
+                
+                // Offline Video Test Button
+                Button(action: { showVideoTestModal = true }) {
+                    HStack {
+                        Image(systemName: "film.stack.fill")
+                            .font(.title3)
+                        Text("🧪 TEST VIDEO THỰC TẾ (TỪ THƯ VIỆN)")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.12))
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.yellow, lineWidth: 1))
+                }
+                .padding(.horizontal, 32)
+                .sheet(isPresented: $showVideoTestModal) {
+                    VideoTestView()
+                }
                 
                 Spacer()
             }

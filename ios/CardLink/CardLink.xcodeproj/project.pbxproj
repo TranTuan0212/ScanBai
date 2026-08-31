@@ -19,6 +19,7 @@
 		1101000A2C12345600000001 /* SessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101000A2C12345600000000 /* SessionPickerView.swift */; };
 		1101001D2C12345600000001 /* DeviceUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101001D2C12345600000000 /* DeviceUtils.swift */; };
 		1101001E2C12345600000001 /* VolumeButtonHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101001E2C12345600000000 /* VolumeButtonHandler.swift */; };
+		1101001F2C12345600000001 /* VideoTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1101001F2C12345600000000 /* VideoTestView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		1101000B2C12345600000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1101001D2C12345600000000 /* DeviceUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/DeviceUtils.swift; sourceTree = "<group>"; };
 		1101001E2C12345600000000 /* VolumeButtonHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/VolumeButtonHandler.swift; sourceTree = "<group>"; };
+		1101001F2C12345600000000 /* VideoTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/VideoTestView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +66,7 @@
 				1101000A2C12345600000000 /* SessionPickerView.swift */,
 				1101001D2C12345600000000 /* DeviceUtils.swift */,
 				1101001E2C12345600000000 /* VolumeButtonHandler.swift */,
+				1101001F2C12345600000000 /* VideoTestView.swift */,
 				1101000B2C12345600000000 /* Info.plist */,
 				110100002C12345600000000 /* CardLink.app */,
 			);
@@ -139,6 +142,7 @@
 				1101000A2C12345600000001 /* SessionPickerView.swift in Sources */,
 				1101001D2C12345600000001 /* DeviceUtils.swift in Sources */,
 				1101001E2C12345600000001 /* VolumeButtonHandler.swift in Sources */,
+				1101001F2C12345600000001 /* VideoTestView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
