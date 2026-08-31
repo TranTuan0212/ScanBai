@@ -155,7 +155,7 @@ final class APIService {
             }
         }.resume()
     }
-}    
+    
     func sendHeartbeat(sessionId: String, completion: @escaping (Bool) -> Void) {
         guard let url = URL(string: "\(baseURL)/sessions/heartbeat") else { return }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5.0)
