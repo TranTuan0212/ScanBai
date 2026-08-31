@@ -342,12 +342,13 @@ final class CardDetector: ObservableObject {
                     let redRatio = Float(redPixels) / Float(boxArea)
                     let blackRatio = Float(blackPixels) / Float(boxArea)
                     
-                    // Card confidence based on paper purity and ink
+                    // Card confidence based on paper purity and ink presence (Must have ink or sharp border)
                     let cardConf = min(0.98, 0.70 + fillDensity * 0.20 + min(0.10, inkRatio * 2.0))
                     
+                    // UIKit Top-Left Origin Normalized Bounding Box
                     let normBox = CGRect(
                         x: CGFloat(minX) / CGFloat(width),
-                        y: CGFloat(minY) / CGFloat(height),
+                        y: 1.0 - (CGFloat(maxY + 1) / CGFloat(height)),
                         width: CGFloat(boxW) / CGFloat(width),
                         height: CGFloat(boxH) / CGFloat(height)
                     )
