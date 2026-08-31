@@ -44,6 +44,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/admin', adminRoutes);
 
+// Serve Web Video Tester page for direct laptop testing
+app.get('/test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/video_test.html'));
+});
+
 // Serve Admin Dashboard Static Frontend Files
 const adminDistPath = path.join(__dirname, '../admin-dashboard/dist');
 app.use(express.static(adminDistPath));
