@@ -142,7 +142,7 @@ struct VideoTestView: View {
                         .background(Capsule().fill(Color.yellow))
                         .shadow(color: .yellow.opacity(0.4), radius: 6)
                     }
-                    .onChange(of: selectedItem) { newItem in
+                    .onChange(of: selectedItem) { _, newItem in
                         Task {
                             if let item = newItem, let movie = try? await item.loadTransferable(type: MovieFile.self) {
                                 processSelectedVideo(url: movie.url)
