@@ -282,11 +282,34 @@
             if (hand.cards.length === 0) {
                 badgesDiv.innerHTML = '<span style="color: #64748b; font-size: 13px;">Chưa phát hiện lá nào</span>';
             } else {
-                hand.cards.forEach(cardName => {
+                hand.cards.forEach(cardObj => {
+                    const cardItem = document.createElement('div');
+                    cardItem.style.display = 'flex';
+                    cardItem.style.flexDirection = 'column';
+                    cardItem.style.alignItems = 'center';
+                    cardItem.style.gap = '4px';
+
+                    const cardName = typeof cardObj === 'string' ? cardObj : cardObj.cardName;
+                    const cropBase64 = typeof cardObj === 'object' ? cardObj.cropBase64 : '';
+
+                    if (cropBase64) {
+                        const img = document.createElement('img');
+                        img.src = 'data:image/jpeg;base64,' + cropBase64;
+                        img.style.width = '64px';
+                        img.style.height = '90px';
+                        img.style.objectFit = 'cover';
+                        img.style.borderRadius = '6px';
+                        img.style.border = '2px solid #22c55e';
+                        img.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.4)';
+                        cardItem.appendChild(img);
+                    }
+
                     const badge = document.createElement('div');
                     badge.className = 'card-badge';
                     badge.innerText = cardName;
-                    badgesDiv.appendChild(badge);
+                    cardItem.appendChild(badge);
+
+                    badgesDiv.appendChild(cardItem);
                 });
             }
 

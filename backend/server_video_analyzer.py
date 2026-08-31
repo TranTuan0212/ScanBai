@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import cv2
+import base64
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -53,11 +54,7 @@ def load_trained_model():
     model.eval()
     return model
 
-def compute_laplacian_sharpness(img_bgr):
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    return cv2.Laplacian(gray, cv2.CV_64F).var()
-
-def analyze_video(video_path, total_hands=3):
+def analyze_video_with_crops(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -85,98 +82,100 @@ def analyze_video(video_path, total_hands=3):
         frame_idx += 1
         timestamp = frame_idx / fps
         
-        # Adaptive Color Segmentation for White Card Paper & Card Borders
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         
-        # Multi-threshold: Adaptive + Otsu to capture cards under any lighting condition
-        thresh1 = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        _, thresh2 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        combined_thresh = cv2.bitwise_or(thresh1, thresh2)
-        
-        contours, _ = cv2.findContours(combined_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         frame_area = width * height
+        
+        best_candidate_box = None
+        best_candidate_area = 0
         
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < frame_area * 0.003 or area > frame_area * 0.45:
+            if area < frame_area * 0.005 or area > frame_area * 0.40:
                 continue
                 
             x, y, bw, bh = cv2.boundingRect(cnt)
             aspect_ratio = float(bw) / float(bh)
-            if 0.30 <= aspect_ratio <= 2.80:
-                # 1. Evaluate Top-Left Corner Crop
-                corner_w = max(12, int(bw * 0.32))
-                corner_h = max(12, int(bh * 0.35))
-                corner1 = frame[y:y+corner_h, x:x+corner_w]
+            if 0.40 <= aspect_ratio <= 2.20:
+                if area > best_candidate_area:
+                    best_candidate_area = area
+                    best_candidate_box = (x, y, bw, bh)
+                    
+        if best_candidate_box is not None:
+            x, y, bw, bh = best_candidate_box
+            corner_w = max(10, int(bw * 0.28))
+            corner_h = max(10, int(bh * 0.32))
+            corner_bgr = frame[y:y+corner_h, x:x+corner_w]
+            
+            if corner_bgr.shape[0] > 10 and corner_bgr.shape[1] > 10:
+                pil_img = Image.fromarray(cv2.cvtColor(corner_bgr, cv2.COLOR_BGR2RGB))
+                tensor_img = transform(pil_img).unsqueeze(0)
                 
-                # 2. Evaluate Bottom-Right Corner Crop (Rotated 180°)
-                br_x = max(0, x + bw - corner_w)
-                br_y = max(0, y + bh - corner_h)
-                corner2_raw = frame[br_y:br_y+corner_h, br_x:br_x+corner_w]
-                corner2 = cv2.rotate(corner2_raw, cv2.ROTATE_180) if corner2_raw.size > 0 else None
-                
-                best_conf = 0.0
-                best_label = None
-                
-                for crop in [corner1, corner2]:
-                    if crop is not None and crop.shape[0] > 10 and crop.shape[1] > 10:
-                        pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                        tensor_img = transform(pil_img).unsqueeze(0)
-                        
-                        with torch.no_grad():
-                            rank_logits, suit_logits = model(tensor_img)
-                            rank_probs = torch.softmax(rank_logits, dim=1)[0]
-                            suit_probs = torch.softmax(suit_logits, dim=1)[0]
-                            
-                            r_idx = torch.argmax(rank_probs).item()
-                            s_idx = torch.argmax(suit_probs).item()
-                            
-                            r_conf = rank_probs[r_idx].item()
-                            s_conf = suit_probs[s_idx].item()
-                            conf = (r_conf + s_conf) / 2.0
-                            
-                            if conf > best_conf:
-                                best_conf = conf
-                                best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                                
-                if best_conf >= 0.55 and best_label is not None:
-                    sharpness = compute_laplacian_sharpness(frame[y:y+bh, x:x+bw])
+                with torch.no_grad():
+                    rank_logits, suit_logits = model(tensor_img)
+                    rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                    suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                    
+                    r_idx = torch.argmax(rank_probs).item()
+                    s_idx = torch.argmax(suit_probs).item()
+                    
+                    r_conf = rank_probs[r_idx].item()
+                    s_conf = suit_probs[s_idx].item()
+                    conf = (r_conf + s_conf) / 2.0
+                    
+                    r_name = RANK_NAMES[r_idx]
+                    s_name = SUIT_NAMES[s_idx]
+                    card_name = f"{r_name} {s_name}"
+                    
+                if conf >= 0.65:
+                    # Draw green bounding box on frame
+                    annotated_frame = frame.copy()
+                    cv2.rectangle(annotated_frame, (x, y), (x + bw, y + bh), (0, 255, 0), 3)
+                    cv2.putText(annotated_frame, f"{card_name} ({conf*100:.0f}%)", (x, max(25, y - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    
+                    # Crop Card & Base64 Encode
+                    card_crop = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
+                    _, crop_buffer = cv2.imencode('.jpg', card_crop)
+                    crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                    
                     raw_detections.append({
                         'timestamp': float(timestamp),
                         'frame_idx': frame_idx,
-                        'card_name': best_label,
-                        'confidence': float(best_conf),
-                        'sharpness': float(sharpness),
+                        'card_name': card_name,
+                        'confidence': float(conf),
+                        'crop_base64': crop_base64,
                         'box': (x, y, bw, bh)
                     })
 
     cap.release()
     
-    # Temporal Clustering & CapCut-Style Keyframe Selection
-    # Group raw detections by temporal gap (> 0.22s) and spatial centroid
+    # Debounce / Filter spatially and temporally
     card_events = []
-    current_cluster = []
+    last_emitted_box = None
+    last_emitted_time = -999.0
     
     for det in raw_detections:
-        if not current_cluster:
-            current_cluster.append(det)
-        else:
-            last_det = current_cluster[-1]
-            time_gap = det['timestamp'] - last_det['timestamp']
-            
-            if time_gap <= 0.22:
-                current_cluster.append(det)
-            else:
-                # Select the highest quality keyframe in this temporal cluster (Best confidence * sharpness)
-                best_frame = max(current_cluster, key=lambda d: d['confidence'] * 0.7 + (min(1.0, d['sharpness'] / 500.0) * 0.3))
-                card_events.append(best_frame)
-                current_cluster = [det]
-                
-    if current_cluster:
-        best_frame = max(current_cluster, key=lambda d: d['confidence'] * 0.7 + (min(1.0, d['sharpness'] / 500.0) * 0.3))
-        card_events.append(best_frame)
+        timestamp = det['timestamp']
+        x, y, bw, bh = det['box']
         
+        if (timestamp - last_emitted_time) > 0.35:
+            should_emit = True
+            if last_emitted_box is not None:
+                lx, ly, lw, lh = last_emitted_box
+                dx = abs((x + bw/2.0) - (lx + lw/2.0))
+                dy = abs((y + bh/2.0) - (ly + lh/2.0))
+                if dx < width * 0.10 and dy < height * 0.10:
+                    should_emit = False
+                    
+            if should_emit:
+                card_events.append(det)
+                last_emitted_box = (x, y, bw, bh)
+                last_emitted_time = timestamp
+                
     # Group card events into Player Hands Matrix
     hands_matrix = []
     for h in range(1, total_hands + 1):
@@ -184,7 +183,12 @@ def analyze_video(video_path, total_hands=3):
         
     for idx, ev in enumerate(card_events):
         h_idx = (idx % total_hands)
-        hands_matrix[h_idx]["cards"].append(ev["card_name"])
+        hands_matrix[h_idx]["cards"].append({
+            "cardName": ev["card_name"],
+            "confidence": ev["confidence"],
+            "timestamp": ev["timestamp"],
+            "cropBase64": ev["crop_base64"]
+        })
         
     result_payload = {
         "status": "ok",
@@ -201,4 +205,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video(v_path, t_hands)
+        analyze_video_with_crops(v_path, t_hands)
