@@ -120,7 +120,7 @@ def extract_held_cards_unwarp(full_frame, c, scale):
     box_pts = cv2.boxPoints(((cx, cy), (w, h), angle))
     dst_w, dst_h = int(w), int(h)
     
-    if dst_w < 15 or dst_h < 25:
+    if dst_w < 15 and dst_h < 25:
         return None
         
     dst_pts = torch.tensor([[0, 0], [dst_w-1, 0], [dst_w-1, dst_h-1], [0, dst_h-1]], dtype=torch.float32).numpy()
@@ -218,7 +218,7 @@ def analyze_video_robust(video_path, total_hands=3):
             
             for c in cnts:
                 area = cv2.contourArea(c)
-                if area >= frame_area * 0.003 and area <= frame_area * 0.35:
+                if area >= frame_area * 0.002 and area <= frame_area * 0.35:
                     rect = cv2.minAreaRect(c)
                     (cx, cy), (w, h), angle = rect
                     if w > 0 and h > 0:
@@ -331,11 +331,11 @@ def analyze_video_robust(video_path, total_hands=3):
 
     cap.release()
     
-    # Deduplicate into Card Dealt Events
+    # Deduplicate with 40ms gap to keep fast consecutive deals
     deduped_events = []
     last_t = -999.0
     for ev in card_events:
-        if (ev['timestamp'] - last_t) >= 0.12:
+        if (ev['timestamp'] - last_t) >= 0.04:
             deduped_events.append(ev)
             last_t = ev['timestamp']
             
