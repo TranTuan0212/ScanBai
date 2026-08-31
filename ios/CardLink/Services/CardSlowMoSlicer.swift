@@ -40,7 +40,7 @@ final class CardSlowMoSlicer: ObservableObject {
         updateStatusBanner()
     }
     
-    convenience init(totalRounds: Int, onCardExtracted: ((Int, Int, Int, Int, Bool, String) -> Void)? = nil) {
+    convenience init(totalRounds: Int, onCardExtracted: ((Int, Int, Int, Int, Bool, String, String) -> Void)? = nil) {
         self.init(totalHands: totalRounds, onCardExtracted: onCardExtracted)
     }
     
@@ -269,10 +269,8 @@ final class CardSlowMoSlicer: ObservableObject {
             isRoundJustCompleted = false
         }
         
-        DispatchQueue.main.async {
-            self.updateStatusBanner()
-        }
-        
+        let jpegData = sharpestImage.jpegData(compressionQuality: 0.65)
+        let imageBase64 = jpegData?.base64EncodedString() ?? ""
         let cardName = customLabel ?? "LÁ BÀI"
         onCardExtracted?(totalDealtCardsGlobal, currentVan, currentHand, currentCard, isRoundComplete, imageBase64, cardName)
         print("🃟 [iOS Fast Slicer] Emitted \(cardName) (Ván #\(currentVan), Tụ \(currentHand)/\(maxHands), Lá \(currentCard)/3)")
