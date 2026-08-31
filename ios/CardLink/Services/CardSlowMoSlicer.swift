@@ -147,27 +147,24 @@ final class CardSlowMoSlicer: ObservableObject {
     }
     
     /// Called when no valid card is detected in frame
-    func processFrameNoCard() {
-        let now = Date()
+    func processFrameNoCard(timestamp: TimeInterval? = nil) {
+        let currentTime = timestamp ?? Date().timeIntervalSince1970
         consecutiveFrameCount = 0
         if isCardActive {
             absentFrameCount += 1
             
-            // Temporal & Spatial Tracker Tolerance:
-            // Require 15 absent frames (~60ms at 240fps) AND at least 0.28s time gap before re-arming for the next card slot!
-            // Prevents track breakage / duplicate card IDs when fingers temporarily occlude the card for a few frames.
-            if absentFrameCount >= 15 && now.timeIntervalSince(lastSeenTime) >= 0.28 {
+            // Require 2 absent frames to re-arm for next fast card slot
+            if absentFrameCount >= 2 {
                 isCardActive = false
-                hasSentCurrentCardSlot = false // Re-arm for the genuine next card!
-                absentFrameCount = 0
+                hasSentCurrentCardSlot = false
+                consecutiveFrameCount = 0
                 activeFrames.removeAll()
+                print("🃟 [Card Slicer] Card track ended. Reset slot for next card!")
             }
         } else {
             absentFrameCount = 0
-            if now.timeIntervalSince(lastSeenTime) > 0.35 {
-                hasSentCurrentCardSlot = false
-                activeFrames.removeAll()
-            }
+            hasSentCurrentCardSlot = false
+            activeFrames.removeAll()
         }
     }
     
