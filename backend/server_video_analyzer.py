@@ -59,28 +59,16 @@ def compute_sharpness(img_bgr):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-def has_playing_card_ink(crop_bgr):
-    """
-    Verifies that candidate crop contains printed Rank/Suit INK (Red or Black) on White Paper.
-    Rejects blank white walls, tiles, bedsheets, and white T-shirts!
-    """
-    if crop_bgr is None or crop_bgr.size == 0:
-        return False
+def has_card_ink(crop_bgr):
+    if crop_bgr is None or crop_bgr.size == 0: return False
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    
-    # Red ink mask (Hearts ♥ and Diamonds ♦)
-    red1 = cv2.inRange(hsv, (0, 50, 40), (12, 255, 255))
-    red2 = cv2.inRange(hsv, (155, 50, 40), (180, 255, 255))
+    red1 = cv2.inRange(hsv, (0, 45, 40), (15, 255, 255))
+    red2 = cv2.inRange(hsv, (150, 45, 40), (180, 255, 255))
     red_mask = cv2.bitwise_or(red1, red2)
-    
-    # Black ink mask (Spades ♠, Clubs ♣, and rank numbers)
-    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 110, 60))
-    
+    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 140, 75))
     ink_mask = cv2.bitwise_or(red_mask, black_mask)
     ink_ratio = float(cv2.countNonZero(ink_mask)) / float(crop_bgr.shape[0] * crop_bgr.shape[1])
-    
-    # Playing cards MUST have 1.2% to 30% printed ink inside paper
-    return (0.012 <= ink_ratio <= 0.30)
+    return (0.008 <= ink_ratio <= 0.40)
 
 def extract_held_cards_unwarp(full_frame, c, scale):
     rect = cv2.minAreaRect(c)
@@ -97,7 +85,7 @@ def extract_held_cards_unwarp(full_frame, c, scale):
         angle += 90.0
         
     aspect_ratio = float(h) / float(w)
-    if not (1.1 <= aspect_ratio <= 3.5):
+    if not (1.1 <= aspect_ratio <= 3.6):
         return None
         
     box_pts = cv2.boxPoints(((cx, cy), (w, h), angle))
@@ -113,8 +101,7 @@ def extract_held_cards_unwarp(full_frame, c, scale):
     if warped_card.size == 0:
         return None
         
-    # Verify candidate card contains Rank/Suit INK (filters out white walls and T-shirts!)
-    if not has_playing_card_ink(warped_card):
+    if not has_card_ink(warped_card):
         return None
         
     c_w = max(14, int(dst_w * 0.35))
@@ -135,7 +122,7 @@ def extract_held_cards_unwarp(full_frame, c, scale):
         
     return crops, warped_card, (int(cx - w/2), int(cy - h/2), int(w), int(h))
 
-def analyze_video_multi_threshold(video_path, total_hands=3):
+def analyze_video_robust(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -202,14 +189,13 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
                 proc_w, proc_h = width, height
                 scale = 1.0
                 
-            hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
-            white_mask = cv2.inRange(hsv, (0, 0, 70), (180, 95, 255))
-            
             gray = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2GRAY)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
-            thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
             
-            card_mask = cv2.bitwise_or(white_mask, thresh)
+            _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 3)
+            
+            card_mask = cv2.bitwise_or(otsu, thresh)
             cnts, _ = cv2.findContours(card_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             frame_area = proc_w * proc_h
@@ -223,7 +209,7 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
                     (cx, cy), (w, h), angle = rect
                     if w > 0 and h > 0:
                         aspect = max(w, h) / min(w, h)
-                        if 1.1 <= aspect <= 3.5:
+                        if 1.10 <= aspect <= 3.6:
                             if area > best_area:
                                 best_area = area
                                 best_contour = c
@@ -268,7 +254,7 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
                             best_conf = conf
                             best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                             
-                    if best_conf >= 0.50 and best_label is not None:
+                    if best_conf >= 0.40 and best_label is not None:
                         annotated = best_item['warped_card'].copy()
                         cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
                         cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
@@ -312,7 +298,7 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
                     best_conf = conf
                     best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                     
-            if best_conf >= 0.50 and best_label is not None:
+            if best_conf >= 0.40 and best_label is not None:
                 annotated = best_item['warped_card'].copy()
                 cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
                 cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
@@ -331,12 +317,20 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
 
     cap.release()
     
+    # Deduplicate into Card Dealt Events
+    deduped_events = []
+    last_t = -999.0
+    for ev in card_events:
+        if (ev['timestamp'] - last_t) >= 0.15:
+            deduped_events.append(ev)
+            last_t = ev['timestamp']
+            
     # Group card events into Player Hands Matrix
     hands_matrix = []
     for h in range(1, total_hands + 1):
         hands_matrix.append({"handIndex": h, "cards": []})
         
-    for idx, ev in enumerate(card_events):
+    for idx, ev in enumerate(deduped_events):
         h_idx = (idx % total_hands)
         hands_matrix[h_idx]["cards"].append({
             "cardName": ev["card_name"],
@@ -348,9 +342,9 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
         
     result_payload = {
         "status": "ok",
-        "totalCards": len(card_events),
+        "totalCards": len(deduped_events),
         "hands": hands_matrix,
-        "rawEvents": card_events
+        "rawEvents": deduped_events
     }
     
     print(json.dumps(result_payload))
@@ -361,4 +355,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_multi_threshold(v_path, t_hands)
+        analyze_video_robust(v_path, t_hands)
