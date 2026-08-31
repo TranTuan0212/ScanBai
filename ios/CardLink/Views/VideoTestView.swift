@@ -293,9 +293,11 @@ struct VideoTestView: View {
                 // Sample 1 frame every 2 frames for fast offline processing
                 if frameIndex % 2 == 0 {
                     let currentRatio = Float(Double(frameIndex) / estimatedTotalFrames)
+                    let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                    let ptsSeconds = pts.isValid ? CMTimeGetSeconds(pts) : Double(frameIndex) / 60.0
                     
                     self.cardDetector.processPixelBuffer(pixelBuffer, orientation: videoCGOrientation) { result in
-                        slicer.processDetectionResult(result)
+                        slicer.processDetectionResult(result, timestamp: ptsSeconds)
                         
                         let uiImg = self.pixelBufferToUIImage(pixelBuffer, orientation: videoCGOrientation)
                         DispatchQueue.main.async {

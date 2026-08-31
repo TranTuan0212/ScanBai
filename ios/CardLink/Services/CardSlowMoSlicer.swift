@@ -65,6 +65,7 @@ final class CardSlowMoSlicer: ObservableObject {
         absentFrameCount = 0
         activeFrames.removeAll()
         lastEmitTime = Date.distantPast
+        lastEmitTimestamp = 0.0
         updateStatusBanner()
     }
     
@@ -80,33 +81,38 @@ final class CardSlowMoSlicer: ObservableObject {
         }
     }
     
+    private var lastEmitTimestamp: TimeInterval = 0.0
+    
     /// Processes incoming detection result with multi-frame track accumulation
-    func processDetectionResult(_ result: CardDetectionResult?) {
+    func processDetectionResult(_ result: CardDetectionResult?, timestamp: TimeInterval? = nil) {
         guard isDealingActive else { return }
         
-        guard let detection = result, let image = detection.cardImage, detection.cardConfidence >= 0.70 else {
-            processFrameNoCard()
+        let currentTime = timestamp ?? Date().timeIntervalSince1970
+        
+        guard let detection = result, let image = detection.cardImage, detection.cardConfidence >= 0.65 else {
+            processFrameNoCard(timestamp: currentTime)
             return
         }
         
-        let now = Date()
-        guard now.timeIntervalSince(lastEmitTime) >= 0.28 else { return }
+        if lastEmitTimestamp > 0 && currentTime - lastEmitTimestamp < 0.22 {
+            return
+        }
         
         consecutiveFrameCount += 1
         absentFrameCount = 0
-        lastSeenTime = now
         activeFrames.append(image)
         
         if activeFrames.count > 15 {
             activeFrames.removeFirst()
         }
         
-        // Trigger slot emission when track is confirmed (>= 2 hits, good visibility or corner hit)
+        // Trigger slot emission when track is confirmed
         if detection.isConfirmed || consecutiveFrameCount >= 2 {
             isCardActive = true
             
             if !hasSentCurrentCardSlot {
-                let sharpestImage = image // CardDetector already stores and updates track.bestFrame!
+                let sharpestImage = image
+                lastEmitTimestamp = currentTime
                 extractAndEmitCard(sharpestImage, customLabel: detection.cardName)
             }
         }
