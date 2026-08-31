@@ -55,10 +55,11 @@ def load_trained_model():
     return model
 
 def compute_sharpness(img_bgr):
+    if img_bgr is None or img_bgr.size == 0: return 0.0
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-def analyze_video_event_driven(video_path, total_hands=3):
+def analyze_video_single_pass(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -67,6 +68,7 @@ def analyze_video_event_driven(video_path, total_hands=3):
     cap = cv2.VideoCapture(video_path)
     
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
@@ -91,140 +93,159 @@ def analyze_video_event_driven(video_path, total_hands=3):
                     
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     
-    # ---------------------------------------------------------
-    # STAGE 1: Ultra-Fast Motion Trigger (OpenCV HSV Mask Only)
-    # Detects ONLY when a card appears on table (0.5s - 1.0s window)
-    # ---------------------------------------------------------
-    detected_time_windows = [] # Array of (start_frame, end_frame)
+    # Single-Pass Rolling Buffer Track State
     frame_idx = 0
-    in_trigger = False
-    trigger_start_frame = 0
+    stride = 2 if total_frames > 120 else 1
     
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_idx += 1
-        
-        if need_rotation:
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-            
-        height, width, _ = frame.shape
-        scale = 320.0 / float(width) if width > 320 else 1.0
-        proc_frame = cv2.resize(frame, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_NEAREST)
-        
-        hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
-        white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
-        cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        has_card_contour = False
-        frame_area = proc_frame.shape[0] * proc_frame.shape[1]
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if area >= frame_area * 0.005 and area <= frame_area * 0.40:
-                _, _, bw, bh = cv2.boundingRect(c)
-                if 0.35 <= (float(bw)/float(bh)) <= 2.50:
-                    has_card_contour = True
-                    break
-                    
-        if has_card_contour:
-            if not in_trigger:
-                in_trigger = True
-                trigger_start_frame = frame_idx
-        else:
-            if in_trigger:
-                in_trigger = False
-                trigger_end_frame = frame_idx
-                # Only keep windows where a card was present for >= 2 frames
-                if (trigger_end_frame - trigger_start_frame) >= 2:
-                    detected_time_windows.append((trigger_start_frame, trigger_end_frame))
-                    
-    if in_trigger:
-        detected_time_windows.append((trigger_start_frame, frame_idx))
-
-    # ---------------------------------------------------------
-    # STAGE 2: Sharpness Keyframe Picker & AI Classifier
-    # Selects ONLY the single SHARPEST frame per card window!
-    # Runs AI Neural Network ONLY ONCE PER CARD!
-    # ---------------------------------------------------------
+    current_track = []
     card_events = []
     
     with torch.inference_mode():
-        for window_idx, (start_f, end_f) in enumerate(detected_time_windows):
-            best_sharpness = -1.0
-            best_frame_data = None
-            best_box = None
-            best_crop = None
-            best_timestamp = 0.0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
             
-            # Scan frames in this trigger window to find the sharpest keyframe
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_f - 1)
-            for current_f in range(start_f, end_f + 1):
-                ret, frame = cap.read()
-                if not ret: break
+            if frame_idx % stride != 0:
+                continue
                 
-                if need_rotation:
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-                    
-                height, width, _ = frame.shape
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
-                cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            timestamp = frame_idx / fps
+            
+            if need_rotation:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                 
-                frame_area = width * height
-                for c in cnts:
-                    area = cv2.contourArea(c)
-                    if area >= frame_area * 0.005 and area <= frame_area * 0.40:
-                        x, y, bw, bh = cv2.boundingRect(c)
-                        if 0.35 <= (float(bw)/float(bh)) <= 2.50:
-                            card_roi = frame[y:y+bh, x:x+bw]
-                            sharpness = compute_sharpness(card_roi)
-                            if sharpness > best_sharpness:
-                                best_sharpness = sharpness
-                                best_frame_data = frame
-                                best_box = (x, y, bw, bh)
-                                best_crop = card_roi
-                                best_timestamp = current_f / fps
-                                
-            # Run AI Neural Network ONLY on the Sharpest Keyframe!
-            if best_frame_data is not None and best_box is not None:
-                x, y, bw, bh = best_box
-                c_w = max(14, int(bw * 0.28))
-                c_h = max(22, int(c_w / 0.60))
+            height, width, _ = frame.shape
+            scale = 480.0 / float(width) if width > 480 else 1.0
+            
+            if scale < 1.0:
+                proc_w = int(width * scale)
+                proc_h = int(height * scale)
+                proc_frame = cv2.resize(frame, (proc_w, proc_h), interpolation=cv2.INTER_NEAREST)
+            else:
+                proc_frame = frame
+                proc_w, proc_h = width, height
+                scale = 1.0
                 
-                crop_tl = best_frame_data[y:y+c_h, x:x+c_w]
-                if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-                    pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
-                    tensor_img = transform(pil_img).unsqueeze(0)
+            hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
+            white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
+            cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            frame_area = proc_w * proc_h
+            best_contour = None
+            best_area = 0
+            
+            for c in cnts:
+                area = cv2.contourArea(c)
+                if area >= frame_area * 0.004 and area <= frame_area * 0.40:
+                    _, _, pbw, pbh = cv2.boundingRect(c)
+                    if 0.35 <= (float(pbw)/float(pbh)) <= 2.50:
+                        if area > best_area:
+                            best_area = area
+                            best_contour = c
+                            
+            if best_contour is not None:
+                px, py, pbw, pbh = cv2.boundingRect(best_contour)
+                x = int(px / scale)
+                y = int(py / scale)
+                bw = int(pbw / scale)
+                bh = int(pbh / scale)
+                
+                card_roi = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
+                sharpness = compute_sharpness(card_roi)
+                
+                current_track.append({
+                    'timestamp': timestamp,
+                    'frame': frame,
+                    'box': (x, y, bw, bh),
+                    'sharpness': sharpness,
+                    'card_roi': card_roi
+                })
+            else:
+                if len(current_track) >= 2:
+                    # Track ended! Pick the single sharpest keyframe in current_track
+                    best_item = max(current_track, key=lambda d: d['sharpness'])
+                    f = best_item['frame']
+                    x, y, bw, bh = best_item['box']
+                    c_w = max(14, int(bw * 0.28))
+                    c_h = max(22, int(c_w / 0.60))
                     
-                    rank_logits, suit_logits = model(tensor_img)
-                    rank_probs = torch.softmax(rank_logits, dim=1)[0]
-                    suit_probs = torch.softmax(suit_logits, dim=1)[0]
-                    
-                    r_idx = torch.argmax(rank_probs).item()
-                    s_idx = torch.argmax(suit_probs).item()
-                    
-                    r_conf = rank_probs[r_idx].item()
-                    s_conf = suit_probs[s_idx].item()
-                    conf = (r_conf + s_conf) / 2.0
-                    
-                    if conf >= 0.55:
-                        card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                    crop_tl = f[y:y+c_h, x:x+c_w]
+                    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
+                        pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+                        tensor_img = transform(pil_img).unsqueeze(0)
                         
-                        annotated_crop = best_crop.copy()
-                        cv2.rectangle(annotated_crop, (0, 0), (annotated_crop.shape[1]-1, annotated_crop.shape[0]-1), (0, 255, 0), 3)
-                        cv2.putText(annotated_crop, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated_crop.shape[0] - 8)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                        rank_logits, suit_logits = model(tensor_img)
+                        rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                        suit_probs = torch.softmax(suit_logits, dim=1)[0]
                         
-                        _, crop_buffer = cv2.imencode('.jpg', annotated_crop)
-                        crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                        r_idx = torch.argmax(rank_probs).item()
+                        s_idx = torch.argmax(suit_probs).item()
                         
-                        card_events.append({
-                            'timestamp': float(best_timestamp),
-                            'card_name': card_name,
-                            'confidence': float(conf),
-                            'crop_base64': crop_base64
-                        })
+                        r_conf = rank_probs[r_idx].item()
+                        s_conf = suit_probs[s_idx].item()
+                        conf = (r_conf + s_conf) / 2.0
+                        
+                        if conf >= 0.55:
+                            card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                            annotated = best_item['card_roi'].copy()
+                            cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
+                            cv2.putText(annotated, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                            
+                            _, crop_buffer = cv2.imencode('.jpg', annotated)
+                            crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                            
+                            card_events.append({
+                                'timestamp': float(best_item['timestamp']),
+                                'card_name': card_name,
+                                'confidence': float(conf),
+                                'crop_base64': crop_base64
+                            })
+                    current_track = []
+                else:
+                    current_track = []
+
+        # Flush any remaining track at end of video
+        if len(current_track) >= 2:
+            best_item = max(current_track, key=lambda d: d['sharpness'])
+            f = best_item['frame']
+            x, y, bw, bh = best_item['box']
+            c_w = max(14, int(bw * 0.28))
+            c_h = max(22, int(c_w / 0.60))
+            
+            crop_tl = f[y:y+c_h, x:x+c_w]
+            if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
+                pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+                tensor_img = transform(pil_img).unsqueeze(0)
+                
+                rank_logits, suit_logits = model(tensor_img)
+                rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                
+                r_idx = torch.argmax(rank_probs).item()
+                s_idx = torch.argmax(suit_probs).item()
+                
+                r_conf = rank_probs[r_idx].item()
+                s_conf = suit_probs[s_idx].item()
+                conf = (r_conf + s_conf) / 2.0
+                
+                if conf >= 0.55:
+                    card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                    annotated = best_item['card_roi'].copy()
+                    cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
+                    cv2.putText(annotated, f"{card_name} ({conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+                    
+                    _, crop_buffer = cv2.imencode('.jpg', annotated)
+                    crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                    
+                    card_events.append({
+                        'timestamp': float(best_item['timestamp']),
+                        'card_name': card_name,
+                        'confidence': float(conf),
+                        'crop_base64': crop_base64
+                    })
 
     cap.release()
     
@@ -257,4 +278,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_event_driven(v_path, t_hands)
+        analyze_video_single_pass(v_path, t_hands)
