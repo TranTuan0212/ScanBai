@@ -172,7 +172,7 @@ struct VideoTestView: View {
                     .onChange(of: selectedItem, perform: { newItem in
                         Task {
                             if let item = newItem, let movie = try? await item.loadTransferable(type: MovieFile.self) {
-                                processSelectedVideo(url: movie.url)
+                                sendVideoToServerForFastGPUAnalysis(url: movie.url)
                             }
                         }
                     })
@@ -390,6 +390,46 @@ struct VideoTestView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.isSendingToServer = false
             self.serverStatusText = "✅ ĐÃ GỬI THÀNH CÔNG \(self.detectedCards.count) LÁ BÀI VỀ SERVER!"
+        }
+    }
+    
+    private func sendVideoToServerForFastGPUAnalysis(url: URL) {
+        isProcessing = true
+        progressRatio = 0.20
+        progressText = "🚀 ĐANG GỬI VIDEO LÊN SERVER BỎ VÀO GPU PHÂN TÍCH (< 10 GIÂY)..."
+        detectedCards.removeAll()
+        
+        APIService.shared.uploadVideoForAnalysis(videoURL: url, rounds: self.totalHands) { result in
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                switch result {
+                case .success(let response):
+                    self.progressRatio = 1.0
+                    self.progressText = "✅ SERVER GPU PHÂN TÍCH HOÀN TẤT! TÌM THẤY \(response.totalCards) LÁ BÀI."
+                    
+                    var cardItems: [DealtCardItem] = []
+                    let vanIdx = 1
+                    for hand in response.hands {
+                        let hIdx = hand.handIndex
+                        for (cIdx, cardName) in hand.cards.enumerated() {
+                            cardItems.append(DealtCardItem(
+                                vanIndex: vanIdx,
+                                handIndex: hIdx,
+                                cardIndex: cIdx + 1,
+                                cardName: cardName,
+                                imageBase64: "",
+                                timestamp: Date()
+                            ))
+                        }
+                    }
+                    self.detectedCards = cardItems
+                    self.serverStatusText = "✅ KẾT QUẢ ĐÃ ĐƯỢC PHÂN TÍCH VÀ CẬP NHẬT TRÊN SERVER!"
+                    
+                case .failure(let err):
+                    self.progressText = "⚠️ LỖI SERVER: \(err.localizedDescription) -> TỰ ĐỘNG CHUYỂN SANG QUÉT TRÊN ĐIỆN THOẠI..."
+                    self.processSelectedVideo(url: url)
+                }
+            }
         }
     }
 }

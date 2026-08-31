@@ -23,6 +23,17 @@ struct StartSessionResponse: Codable {
     let streamUrl: String?
 }
 
+struct ServerVideoAnalysisHand: Codable {
+    let handIndex: Int
+    let cards: [String]
+}
+
+struct ServerVideoAnalysisResponse: Codable {
+    let status: String
+    let totalCards: Int
+    let hands: [ServerVideoAnalysisHand]
+}
+
 final class APIService {
     static let shared = APIService()
     var serverIP: String {
@@ -105,6 +116,46 @@ final class APIService {
         }.resume()
     }
     
+    func uploadVideoForAnalysis(videoURL: URL, rounds: Int = 3, completion: @escaping (Result<ServerVideoAnalysisResponse, Error>) -> Void) {
+        guard let url = URL(string: "\(baseURL)/sessions/upload-video-analysis") else { return }
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        guard let videoData = try? Data(contentsOf: videoURL) else {
+            completion(.failure(NSError(domain: "VideoReadError", code: -1)))
+            return
+        }
+        
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"rounds\"\r\n\r\n".data(using: .utf8)!)
+        body.append("\(rounds)\r\n".data(using: .utf8)!)
+        
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"video\"; filename=\"clip.mp4\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
+        body.append(videoData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        request.httpBody = body
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let data = data else { return }
+            do {
+                let result = try JSONDecoder().decode(ServerVideoAnalysisResponse.self, from: data)
+                completion(.success(result))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+}    
     func sendHeartbeat(sessionId: String, completion: @escaping (Bool) -> Void) {
         guard let url = URL(string: "\(baseURL)/sessions/heartbeat") else { return }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5.0)

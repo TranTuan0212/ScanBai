@@ -254,4 +254,77 @@ router.get('/active', authenticateToken, async (req, res) => {
   }
 });
 
+const multer = require('multer');
+const path = require('path');
+const { spawn } = require('child_process');
+const fs = require('fs');
+
+const uploadDir = path.join(__dirname, '../../../public/uploads/videos');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.mp4';
+    cb(null, `video_${Date.now()}_${Math.round(Math.random() * 1e4)}${ext}`);
+  }
+});
+const upload = multer({ storage: storage });
+
+/**
+ * POST /api/sessions/upload-video-analysis
+ * Server-side High-Speed Video Analysis Endpoint (< 10 seconds)
+ */
+router.post('/upload-video-analysis', upload.single('video'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file provided' });
+    }
+
+    const videoPath = req.file.path;
+    const totalHands = req.body.rounds || 3;
+    const pythonScript = path.join(__dirname, '../../../server_video_analyzer.py');
+
+    console.log(`[Server Video Analyzer] Running analysis on: ${videoPath} (${totalHands} hands)`);
+
+    const pythonProcess = spawn('python', [pythonScript, videoPath, String(totalHands)]);
+    let stdoutData = '';
+    let stderrData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      fs.unlink(videoPath, () => {});
+
+      if (code !== 0) {
+        console.error('[Server Video Analyzer Error]', stderrData);
+        return res.status(500).json({ error: 'Python analyzer failed', details: stderrData });
+      }
+
+      try {
+        const result = JSON.parse(stdoutData.trim());
+        const io = req.app.get('io');
+        if (io) {
+          io.emit('video_analysis_complete', result);
+        }
+        return res.status(200).json(result);
+      } catch (parseErr) {
+        console.error('[Server Video Analyzer JSON Parse Error]', stdoutData);
+        return res.status(500).json({ error: 'Invalid JSON from analyzer', raw: stdoutData });
+      }
+    });
+  } catch (err) {
+    console.error('[Upload Video Analysis Error]', err);
+    return res.status(500).json({ error: 'Internal server error', message: err.message });
+  }
+});
+
 module.exports = router;
