@@ -259,7 +259,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
-const uploadDir = path.join(__dirname, '../../../public/uploads/videos');
+const uploadDir = path.join(__dirname, '../../public/uploads/videos');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -285,11 +285,17 @@ router.post('/upload-video-analysis', upload.single('video'), (req, res) => {
 
     const videoPath = req.file.path;
     const totalHands = req.body.rounds || 3;
-    const pythonScript = path.join(__dirname, '../../../server_video_analyzer.py');
+    const pythonScript = path.join(__dirname, '../../server_video_analyzer.py');
 
     console.log(`[Server Video Analyzer] Running analysis on: ${videoPath} (${totalHands} hands)`);
 
-    const pythonProcess = spawn('python', [pythonScript, videoPath, String(totalHands)]);
+    let pythonExecutable = process.platform === 'win32' ? 'py' : 'python3';
+    let pythonProcess = spawn(pythonExecutable, [pythonScript, videoPath, String(totalHands)]);
+    
+    pythonProcess.on('error', (spawnErr) => {
+      console.log(`[Python Spawn Warning] Failed with ${pythonExecutable}, trying 'python'...`);
+      pythonProcess = spawn('python', [pythonScript, videoPath, String(totalHands)]);
+    });
     let stdoutData = '';
     let stderrData = '';
 
