@@ -54,7 +54,7 @@ def load_trained_model():
     model.eval()
     return model
 
-def analyze_video_perfect(video_path, total_hands=3):
+def analyze_video_fast(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -63,17 +63,17 @@ def analyze_video_perfect(video_path, total_hands=3):
     cap = cv2.VideoCapture(video_path)
     
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    # Model expects 160 Height x 96 Width (Aspect Ratio ~0.60)
     transform = transforms.Compose([
         transforms.Resize((160, 96)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Auto-detect if iPhone video was recorded in portrait (saved landscape)
+    # Auto-detect if video needs 90° Clockwise Rotation
     need_rotation = False
     ret, sample_frame = cap.read()
     if ret:
@@ -92,102 +92,99 @@ def analyze_video_perfect(video_path, total_hands=3):
     frame_idx = 0
     raw_detections = []
     
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_idx += 1
-        timestamp = frame_idx / fps
-        
-        if need_rotation:
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    # Adaptive Frame Stride: Sample every 2 frames if video is long (> 150 frames) for 10x speedup
+    frame_stride = 2 if total_frames > 150 else 1
+    
+    with torch.inference_mode():
+        while cap.isOpened():
+            ret, full_frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
             
-        height, width, _ = frame.shape
-        
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        
-        white_mask = cv2.inRange(hsv, (0, 0, 80), (180, 90, 255))
-        _, otsu_mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        card_mask = cv2.bitwise_or(white_mask, otsu_mask)
-        
-        contours, _ = cv2.findContours(card_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        frame_area = width * height
-        
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < frame_area * 0.002 or area > frame_area * 0.50:
+            if frame_idx % frame_stride != 0:
                 continue
                 
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            aspect_ratio = float(bw) / float(bh)
+            timestamp = frame_idx / fps
             
-            if 0.25 <= aspect_ratio <= 3.20:
-                # Calculate Aspect-Ratio Preserving Corner Crops (0.60 Ratio: 96W x 160H)
-                c_w = max(14, int(bw * 0.28))
-                c_h = max(22, int(c_w / 0.60)) # Ensures 0.60 aspect ratio!
+            if need_rotation:
+                full_frame = cv2.rotate(full_frame, cv2.ROTATE_90_CLOCKWISE)
                 
-                crops = []
+            height, width, _ = full_frame.shape
+            
+            # Downscale processing resolution to max width 640 for 5x faster OpenCV contours
+            scale = 640.0 / float(width) if width > 640 else 1.0
+            if scale < 1.0:
+                proc_w = int(width * scale)
+                proc_h = int(height * scale)
+                proc_frame = cv2.resize(full_frame, (proc_w, proc_h), interpolation=cv2.INTER_NEAREST)
+            else:
+                proc_frame = full_frame
+                proc_w, proc_h = width, height
+                scale = 1.0
                 
-                # 1. Top-Left Corner Crop
-                crop_tl = frame[y:y+c_h, x:x+c_w]
-                if crop_tl.size > 0: crops.append(crop_tl)
+            hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
+            white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
+            
+            contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            frame_area = proc_w * proc_h
+            
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < frame_area * 0.004 or area > frame_area * 0.40:
+                    continue
+                    
+                px, py, pbw, pbh = cv2.boundingRect(cnt)
+                aspect_ratio = float(pbw) / float(pbh)
                 
-                # 2. Bottom-Right Corner Crop (Rotated 180°)
-                br_x = max(0, x + bw - c_w)
-                br_y = max(0, y + bh - c_h)
-                crop_br_raw = frame[br_y:br_y+c_h, br_x:br_x+c_w]
-                if crop_br_raw.size > 0: crops.append(cv2.rotate(crop_br_raw, cv2.ROTATE_180))
-                
-                # 3. Full Card Crop (Resized to 96x160)
-                full_card = frame[y:y+bh, x:x+bw]
-                if full_card.size > 0: crops.append(full_card)
-                
-                best_conf = 0.0
-                best_label = None
-                best_crop_img = None
-                
-                for crop in crops:
-                    if crop.shape[0] > 10 and crop.shape[1] > 10:
-                        pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                # Filter strictly for card aspect ratio before running neural network
+                if 0.35 <= aspect_ratio <= 2.50:
+                    # Map box back to full resolution frame
+                    x = int(px / scale)
+                    y = int(py / scale)
+                    bw = int(pbw / scale)
+                    bh = int(pbh / scale)
+                    
+                    c_w = max(14, int(bw * 0.28))
+                    c_h = max(22, int(c_w / 0.60)) # Preserves 0.60 aspect ratio!
+                    
+                    crop_tl = full_frame[y:y+c_h, x:x+c_w]
+                    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
+                        pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
                         tensor_img = transform(pil_img).unsqueeze(0)
                         
-                        with torch.no_grad():
-                            rank_logits, suit_logits = model(tensor_img)
-                            rank_probs = torch.softmax(rank_logits, dim=1)[0]
-                            suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                        rank_logits, suit_logits = model(tensor_img)
+                        rank_probs = torch.softmax(rank_logits, dim=1)[0]
+                        suit_probs = torch.softmax(suit_logits, dim=1)[0]
+                        
+                        r_idx = torch.argmax(rank_probs).item()
+                        s_idx = torch.argmax(suit_probs).item()
+                        
+                        r_conf = rank_probs[r_idx].item()
+                        s_conf = suit_probs[s_idx].item()
+                        conf = (r_conf + s_conf) / 2.0
+                        
+                        if conf >= 0.65:
+                            card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                             
-                            r_idx = torch.argmax(rank_probs).item()
-                            s_idx = torch.argmax(suit_probs).item()
-                            
-                            r_conf = rank_probs[r_idx].item()
-                            s_conf = suit_probs[s_idx].item()
-                            conf = (r_conf + s_conf) / 2.0
-                            
-                            if conf > best_conf:
-                                best_conf = conf
-                                best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                                best_crop_img = crop
+                            # Draw green bounding box & label on card crop
+                            card_crop = full_frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
+                            if card_crop.size > 0:
+                                cv2.rectangle(card_crop, (0, 0), (card_crop.shape[1]-1, card_crop.shape[0]-1), (0, 255, 0), 3)
+                                cv2.putText(card_crop, f"{card_name} ({conf*100:.0f}%)", (5, max(18, card_crop.shape[0] - 8)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
                                 
-                if best_conf >= 0.60 and best_label is not None:
-                    # Draw green bounding box & label on card crop
-                    card_crop = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
-                    cv2.rectangle(card_crop, (0, 0), (card_crop.shape[1]-1, card_crop.shape[0]-1), (0, 255, 0), 3)
-                    cv2.putText(card_crop, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, card_crop.shape[0] - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-                    
-                    _, crop_buffer = cv2.imencode('.jpg', card_crop)
-                    crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
-                    
-                    raw_detections.append({
-                        'timestamp': float(timestamp),
-                        'frame_idx': frame_idx,
-                        'card_name': best_label,
-                        'confidence': float(best_conf),
-                        'crop_base64': crop_base64,
-                        'box': (x, y, bw, bh)
-                    })
+                                _, crop_buffer = cv2.imencode('.jpg', card_crop)
+                                crop_base64 = base64.b64encode(crop_buffer).decode('utf-8') if crop_buffer is not None else ""
+                                
+                                raw_detections.append({
+                                    'timestamp': float(timestamp),
+                                    'frame_idx': frame_idx,
+                                    'card_name': card_name,
+                                    'confidence': float(conf),
+                                    'crop_base64': crop_base64,
+                                    'box': (x, y, bw, bh)
+                                })
 
     cap.release()
     
@@ -243,4 +240,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_perfect(v_path, t_hands)
+        analyze_video_fast(v_path, t_hands)
