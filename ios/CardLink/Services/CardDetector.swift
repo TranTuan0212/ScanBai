@@ -16,6 +16,7 @@ import Foundation
 import CoreGraphics
 import CoreImage
 import UIKit
+import Vision
 
 // MARK: - Detection Result Structure
 
