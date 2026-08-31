@@ -30,6 +30,7 @@ struct CardDetectionResult {
     let boundingBox: CGRect
     let cardImage: UIImage?
     let isConfirmed: Bool
+    let allBoxes: [CGRect]
 }
 
 // MARK: - Track Object for Multi-Frame Accumulation
@@ -257,7 +258,8 @@ final class CardDetector: ObservableObject {
                 cornerQuality: track.cornerQuality,
                 boundingBox: track.boundingBox,
                 cardImage: track.bestFrame ?? currentFrameImage,
-                isConfirmed: track.isConfirmed
+                isConfirmed: track.isConfirmed,
+                allBoxes: self.activeTracks.map { $0.boundingBox }
             )
             
             completion(result)

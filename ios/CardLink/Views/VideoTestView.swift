@@ -32,6 +32,7 @@ struct VideoTestView: View {
     
     @State private var currentFrameImage: UIImage? = nil
     @State private var currentDetectionBox: CGRect? = nil
+    @State private var allDetectionBoxes: [CGRect] = []
     @State private var currentCardLabel: String? = nil
     
     @State private var detectedCards: [DealtCardItem] = []
@@ -89,8 +90,33 @@ struct VideoTestView: View {
                         }
                     }
                     
-                    // Bounding Box Overlay
-                    if let box = currentDetectionBox {
+                    // Multiple Stable Bounding Boxes Overlay
+                    if !allDetectionBoxes.isEmpty {
+                        GeometryReader { geo in
+                            ForEach(Array(allDetectionBoxes.enumerated()), id: \.offset) { idx, box in
+                                let w = box.width * geo.size.width
+                                let h = box.height * geo.size.height
+                                let x = box.origin.x * geo.size.width
+                                let y = box.origin.y * geo.size.height
+                                
+                                ZStack(alignment: .topLeading) {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.green, lineWidth: 2.5)
+                                        .shadow(color: .green.opacity(0.8), radius: 4)
+                                        .frame(width: w, height: h)
+                                    
+                                    Text(idx == 0 ? (currentCardLabel ?? "LÁ BÀI") : "LÁ BÀI")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(Color.green))
+                                        .offset(x: 2, y: -16)
+                                }
+                                .offset(x: x, y: y)
+                            }
+                        }
+                    } else if let box = currentDetectionBox {
                         GeometryReader { geo in
                             let w = box.width * geo.size.width
                             let h = box.height * geo.size.height
@@ -301,6 +327,7 @@ struct VideoTestView: View {
                         slicer.processDetectionResult(result, timestamp: ptsSeconds)
                         
                         let uiImg = self.pixelBufferToUIImage(pixelBuffer, orientation: videoCGOrientation)
+                        let boxes = result?.allBoxes ?? []
                         DispatchQueue.main.async {
                             self.progressRatio = min(1.0, currentRatio)
                             self.progressText = "ĐANG PHÂN TÍCH FRAME #\(frameIndex) (\(Int(min(1.0, currentRatio) * 100))%)..."
@@ -308,9 +335,12 @@ struct VideoTestView: View {
                                 self.currentFrameImage = img
                             }
                             self.currentDetectionBox = result?.boundingBox
+                            self.allDetectionBoxes = boxes
                             self.currentCardLabel = result?.cardName
                         }
                     }
+                    // Smooth frame pacing (~60 FPS real video speed) to prevent UI flashing!
+                    try? await Task.sleep(nanoseconds: 16_000_000)
                 }
             }
             
