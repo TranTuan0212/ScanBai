@@ -62,13 +62,42 @@ def compute_sharpness(img_bgr):
 def has_card_ink(crop_bgr):
     if crop_bgr is None or crop_bgr.size == 0: return False
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    red1 = cv2.inRange(hsv, (0, 45, 40), (15, 255, 255))
-    red2 = cv2.inRange(hsv, (150, 45, 40), (180, 255, 255))
+    red1 = cv2.inRange(hsv, (0, 40, 40), (15, 255, 255))
+    red2 = cv2.inRange(hsv, (150, 40, 40), (180, 255, 255))
     red_mask = cv2.bitwise_or(red1, red2)
-    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 140, 75))
+    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 150, 80))
     ink_mask = cv2.bitwise_or(red_mask, black_mask)
     ink_ratio = float(cv2.countNonZero(ink_mask)) / float(crop_bgr.shape[0] * crop_bgr.shape[1])
-    return (0.008 <= ink_ratio <= 0.40)
+    return (0.005 <= ink_ratio <= 0.45)
+
+def extract_all_4_corners(warped_card):
+    dst_h, dst_w, _ = warped_card.shape
+    c_w = max(14, int(dst_w * 0.38))
+    c_h = max(22, int(c_w / 0.60))
+    
+    crops = []
+    
+    # 1. Top-Left Corner
+    c1 = warped_card[0:min(dst_h, c_h), 0:min(dst_w, c_w)]
+    if c1.shape[0] > 10 and c1.shape[1] > 10: crops.append(c1)
+    
+    # 2. Top-Right Corner (Rotated 90° CCW)
+    c2 = warped_card[0:min(dst_h, c_h), max(0, dst_w - c_w):dst_w]
+    if c2.shape[0] > 10 and c2.shape[1] > 10: crops.append(cv2.rotate(c2, cv2.ROTATE_90_COUNTERCLOCKWISE))
+    
+    # 3. Bottom-Right Corner (Rotated 180°)
+    c3 = warped_card[max(0, dst_h - c_h):dst_h, max(0, dst_w - c_w):dst_w]
+    if c3.shape[0] > 10 and c3.shape[1] > 10: crops.append(cv2.rotate(c3, cv2.ROTATE_180))
+    
+    # 4. Bottom-Left Corner (Rotated 90° CW)
+    c4 = warped_card[max(0, dst_h - c_h):dst_h, 0:min(dst_w, c_w)]
+    if c4.shape[0] > 10 and c4.shape[1] > 10: crops.append(cv2.rotate(c4, cv2.ROTATE_90_CLOCKWISE))
+    
+    # 5. Full Card ROI
+    if warped_card.shape[0] > 20 and warped_card.shape[1] > 15:
+        crops.append(warped_card)
+        
+    return crops
 
 def extract_held_cards_unwarp(full_frame, c, scale):
     rect = cv2.minAreaRect(c)
@@ -104,22 +133,7 @@ def extract_held_cards_unwarp(full_frame, c, scale):
     if not has_card_ink(warped_card):
         return None
         
-    c_w = max(14, int(dst_w * 0.35))
-    c_h = max(22, int(c_w / 0.60))
-    
-    crops = []
-    # 1. Top-Left Corner
-    crop_tl = warped_card[0:min(dst_h, c_h), 0:min(dst_w, c_w)]
-    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-        crops.append(crop_tl)
-        
-    # 2. Bottom-Right Corner (180° rotated)
-    br_y = max(0, dst_h - c_h)
-    br_x = max(0, dst_w - c_w)
-    crop_br = warped_card[br_y:dst_h, br_x:dst_w]
-    if crop_br.shape[0] > 10 and crop_br.shape[1] > 10:
-        crops.append(cv2.rotate(crop_br, cv2.ROTATE_180))
-        
+    crops = extract_all_4_corners(warped_card)
     return crops, warped_card, (int(cx - w/2), int(cy - h/2), int(w), int(h))
 
 def analyze_video_robust(video_path, total_hands=3):
@@ -209,7 +223,7 @@ def analyze_video_robust(video_path, total_hands=3):
                     (cx, cy), (w, h), angle = rect
                     if w > 0 and h > 0:
                         aspect = max(w, h) / min(w, h)
-                        if 1.10 <= aspect <= 3.6:
+                        if 1.05 <= aspect <= 3.6:
                             if area > best_area:
                                 best_area = area
                                 best_contour = c
@@ -254,7 +268,7 @@ def analyze_video_robust(video_path, total_hands=3):
                             best_conf = conf
                             best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                             
-                    if best_conf >= 0.40 and best_label is not None:
+                    if best_conf >= 0.35 and best_label is not None:
                         annotated = best_item['warped_card'].copy()
                         cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
                         cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
@@ -298,7 +312,7 @@ def analyze_video_robust(video_path, total_hands=3):
                     best_conf = conf
                     best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                     
-            if best_conf >= 0.40 and best_label is not None:
+            if best_conf >= 0.35 and best_label is not None:
                 annotated = best_item['warped_card'].copy()
                 cv2.rectangle(annotated, (0, 0), (annotated.shape[1]-1, annotated.shape[0]-1), (0, 255, 0), 3)
                 cv2.putText(annotated, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, annotated.shape[0] - 8)),
@@ -321,7 +335,7 @@ def analyze_video_robust(video_path, total_hands=3):
     deduped_events = []
     last_t = -999.0
     for ev in card_events:
-        if (ev['timestamp'] - last_t) >= 0.15:
+        if (ev['timestamp'] - last_t) >= 0.12:
             deduped_events.append(ev)
             last_t = ev['timestamp']
             

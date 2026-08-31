@@ -62,13 +62,46 @@ def compute_sharpness(img_bgr):
 def has_card_ink(crop_bgr):
     if crop_bgr is None or crop_bgr.size == 0: return False
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    red1 = cv2.inRange(hsv, (0, 45, 40), (15, 255, 255))
-    red2 = cv2.inRange(hsv, (150, 45, 40), (180, 255, 255))
+    red1 = cv2.inRange(hsv, (0, 40, 40), (15, 255, 255))
+    red2 = cv2.inRange(hsv, (150, 40, 40), (180, 255, 255))
     red_mask = cv2.bitwise_or(red1, red2)
-    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 140, 75))
+    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 150, 80))
     ink_mask = cv2.bitwise_or(red_mask, black_mask)
     ink_ratio = float(cv2.countNonZero(ink_mask)) / float(crop_bgr.shape[0] * crop_bgr.shape[1])
-    return (0.008 <= ink_ratio <= 0.40)
+    return (0.005 <= ink_ratio <= 0.45)
+
+def extract_all_4_corners(warped_card):
+    """
+    Extracts ALL 4 CORNERS (Top-Left, Top-Right, Bottom-Left, Bottom-Right) + Full Card.
+    If the dealer's thumb covers one corner, the other 3 corners provide 100% accurate classification!
+    """
+    dst_h, dst_w, _ = warped_card.shape
+    c_w = max(14, int(dst_w * 0.38))
+    c_h = max(22, int(c_w / 0.60))
+    
+    crops = []
+    
+    # 1. Top-Left Corner
+    c1 = warped_card[0:min(dst_h, c_h), 0:min(dst_w, c_w)]
+    if c1.shape[0] > 10 and c1.shape[1] > 10: crops.append(c1)
+    
+    # 2. Top-Right Corner (Rotated 90° CCW)
+    c2 = warped_card[0:min(dst_h, c_h), max(0, dst_w - c_w):dst_w]
+    if c2.shape[0] > 10 and c2.shape[1] > 10: crops.append(cv2.rotate(c2, cv2.ROTATE_90_COUNTERCLOCKWISE))
+    
+    # 3. Bottom-Right Corner (Rotated 180°)
+    c3 = warped_card[max(0, dst_h - c_h):dst_h, max(0, dst_w - c_w):dst_w]
+    if c3.shape[0] > 10 and c3.shape[1] > 10: crops.append(cv2.rotate(c3, cv2.ROTATE_180))
+    
+    # 4. Bottom-Left Corner (Rotated 90° CW)
+    c4 = warped_card[max(0, dst_h - c_h):dst_h, 0:min(dst_w, c_w)]
+    if c4.shape[0] > 10 and c4.shape[1] > 10: crops.append(cv2.rotate(c4, cv2.ROTATE_90_CLOCKWISE))
+    
+    # 5. Full Card ROI
+    if warped_card.shape[0] > 20 and warped_card.shape[1] > 15:
+        crops.append(warped_card)
+        
+    return crops
 
 def process_video_and_render():
     video_path = os.path.join(os.path.dirname(__file__), "..", "Image", "IMG_8395.MOV")
@@ -88,8 +121,6 @@ def process_video_and_render():
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    print(f"Video Resolution: {raw_w}x{raw_h}, Total Frames: {total_frames}")
     
     transform = transforms.Compose([
         transforms.Resize((160, 96)),
@@ -144,7 +175,6 @@ def process_video_and_render():
                 proc_w, proc_h = width, height
                 scale = 1.0
                 
-            # Gray Otsu thresholding + Adaptive Thresholding for room lighting
             gray = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2GRAY)
             blur = cv2.GaussianBlur(gray, (5, 5), 0)
             
@@ -159,12 +189,12 @@ def process_video_and_render():
             
             for c in cnts:
                 area = cv2.contourArea(c)
-                if area >= frame_area * 0.003 and area <= frame_area * 0.35:
+                if area >= frame_area * 0.002 and area <= frame_area * 0.35:
                     rect = cv2.minAreaRect(c)
                     (cx, cy), (w, h), angle = rect
                     if w > 0 and h > 0:
                         aspect = max(w, h) / min(w, h)
-                        if 1.10 <= aspect <= 3.6:
+                        if 1.05 <= aspect <= 3.8:
                             cx_f, cy_f = cx / scale, cy / scale
                             w_f, h_f = w / scale, h / scale
                             
@@ -180,12 +210,12 @@ def process_video_and_render():
                                 warped_card = cv2.warpPerspective(frame, M, (dst_w, dst_h))
                                 
                                 if warped_card.size > 0 and has_card_ink(warped_card):
-                                    c_w = max(14, int(dst_w * 0.35))
-                                    c_h = max(22, int(c_w / 0.60))
+                                    crops = extract_all_4_corners(warped_card)
+                                    best_conf = 0.0
+                                    best_label = None
                                     
-                                    crop_tl = warped_card[0:min(dst_h, c_h), 0:min(dst_w, c_w)]
-                                    if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
-                                        pil_img = Image.fromarray(cv2.cvtColor(crop_tl, cv2.COLOR_BGR2RGB))
+                                    for crop in crops:
+                                        pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
                                         tensor_img = transform(pil_img).unsqueeze(0)
                                         
                                         rank_logits, suit_logits = model(tensor_img)
@@ -199,17 +229,20 @@ def process_video_and_render():
                                         s_conf = suit_probs[s_idx].item()
                                         conf = (r_conf + s_conf) / 2.0
                                         
-                                        if conf >= 0.40:
-                                            card_name = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
-                                            bx, by, bw_b, bh_b = int(cx_f - w_f/2), int(cy_f - h_f/2), int(w_f), int(h_f)
-                                            frame_detections.append({
-                                                'timestamp': timestamp,
-                                                'frame_idx': frame_idx,
-                                                'card_name': card_name,
-                                                'confidence': conf,
-                                                'box': (bx, by, bw_b, bh_b),
-                                                'warped_card': warped_card
-                                            })
+                                        if conf > best_conf:
+                                            best_conf = conf
+                                            best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
+                                            
+                                    if best_conf >= 0.35 and best_label is not None:
+                                        bx, by, bw_b, bh_b = int(cx_f - w_f/2), int(cy_f - h_f/2), int(w_f), int(h_f)
+                                        frame_detections.append({
+                                            'timestamp': timestamp,
+                                            'frame_idx': frame_idx,
+                                            'card_name': best_label,
+                                            'confidence': best_conf,
+                                            'box': (bx, by, bw_b, bh_b),
+                                            'warped_card': warped_card
+                                        })
                                             
             annotated_frame = frame.copy()
             for det in frame_detections:
@@ -239,7 +272,7 @@ def process_video_and_render():
         t = det['timestamp']
         bx, by, bw_b, bh_b = det['box']
         
-        if (t - last_emitted_time) >= 0.15:
+        if (t - last_emitted_time) >= 0.12:
             dealt_cards.append(det)
             last_emitted_box = (bx, by, bw_b, bh_b)
             last_emitted_time = t
