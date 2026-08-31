@@ -119,33 +119,6 @@ final class CardSlowMoSlicer: ObservableObject {
         }
     }
     
-    /// Processes incoming frame (legacy fallback)
-    func processFrame(_ image: UIImage, whitePaperRatio: Float = 0.50, confidence: Float = 0.95) {
-        guard isDealingActive else { return }
-        
-        let now = Date()
-        guard now.timeIntervalSince(lastEmitTime) >= 0.28 else { return }
-        
-        consecutiveFrameCount += 1
-        absentFrameCount = 0
-        lastSeenTime = now
-        activeFrames.append(image)
-        
-        if activeFrames.count > 15 {
-            activeFrames.removeFirst()
-        }
-        
-        if consecutiveFrameCount >= 2 {
-            isCardActive = true
-            
-            if !hasSentCurrentCardSlot {
-                if let sharpestImage = findSharpestFrame(in: activeFrames) ?? activeFrames.last {
-                    extractAndEmitCard(sharpestImage)
-                }
-            }
-        }
-    }
-    
     /// Called when no valid card is detected in frame
     func processFrameNoCard(timestamp: TimeInterval? = nil) {
         let currentTime = timestamp ?? Date().timeIntervalSince1970
@@ -166,17 +139,6 @@ final class CardSlowMoSlicer: ObservableObject {
             hasSentCurrentCardSlot = false
             activeFrames.removeAll()
         }
-    }
-    
-    /// Manual capture trigger button ("BÓC BÀI THỦ CÔNG")
-    func manualCapture(_ image: UIImage) {
-        guard isDealingActive else {
-            isDealingActive = true
-            updateStatusBanner()
-            extractAndEmitCard(image)
-            return
-        }
-        extractAndEmitCard(image)
     }
     
     /// Finds the sharpest image using Laplacian Variance edge sharpness
