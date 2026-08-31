@@ -54,7 +54,7 @@ def load_trained_model():
     model.eval()
     return model
 
-def analyze_video_robust(video_path, total_hands=3):
+def analyze_video_perfect(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -66,29 +66,27 @@ def analyze_video_robust(video_path, total_hands=3):
     raw_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     raw_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
+    # Model expects 160 Height x 96 Width (Aspect Ratio ~0.60)
     transform = transforms.Compose([
         transforms.Resize((160, 96)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # 1. Determine if video needs 90° Clockwise Rotation (Portrait videos saved in landscape stream)
+    # Auto-detect if iPhone video was recorded in portrait (saved landscape)
     need_rotation = False
     ret, sample_frame = cap.read()
     if ret:
-        # Check if sample frame is sideways (e.g. 720x1280 but actually portrait)
         hsv_sample = cv2.cvtColor(sample_frame, cv2.COLOR_BGR2HSV)
         white_sample = cv2.inRange(hsv_sample, (0, 0, 85), (180, 85, 255))
         cnts, _ = cv2.findContours(white_sample, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
             if cv2.contourArea(c) > (raw_w * raw_h * 0.01):
                 _, _, bw, bh = cv2.boundingRect(c)
-                # If cards appear horizontal (bw > bh * 1.3), the video is turned 90° sideways!
-                if bw > bh * 1.3:
+                if bw > bh * 1.25:
                     need_rotation = True
                     break
                     
-    # Reset video capture to start
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     
     frame_idx = 0
@@ -101,13 +99,11 @@ def analyze_video_robust(video_path, total_hands=3):
         frame_idx += 1
         timestamp = frame_idx / fps
         
-        # Apply 90° rotation if video was recorded vertically on phone
         if need_rotation:
             frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
             
         height, width, _ = frame.shape
         
-        # Color segmentation for card paper
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -121,40 +117,39 @@ def analyze_video_robust(video_path, total_hands=3):
         
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < frame_area * 0.003 or area > frame_area * 0.45:
+            if area < frame_area * 0.002 or area > frame_area * 0.50:
                 continue
                 
             x, y, bw, bh = cv2.boundingRect(cnt)
             aspect_ratio = float(bw) / float(bh)
             
-            if 0.30 <= aspect_ratio <= 2.80:
-                c_w = max(10, int(bw * 0.32))
-                c_h = max(10, int(bh * 0.35))
+            if 0.25 <= aspect_ratio <= 3.20:
+                # Calculate Aspect-Ratio Preserving Corner Crops (0.60 Ratio: 96W x 160H)
+                c_w = max(14, int(bw * 0.28))
+                c_h = max(22, int(c_w / 0.60)) # Ensures 0.60 aspect ratio!
                 
-                # Extract 4 corner crops to handle ANY card orientation/angle!
                 crops = []
                 
-                # 1. Top-Left Corner
+                # 1. Top-Left Corner Crop
                 crop_tl = frame[y:y+c_h, x:x+c_w]
                 if crop_tl.size > 0: crops.append(crop_tl)
                 
-                # 2. Bottom-Right Corner (Rotated 180°)
+                # 2. Bottom-Right Corner Crop (Rotated 180°)
                 br_x = max(0, x + bw - c_w)
                 br_y = max(0, y + bh - c_h)
                 crop_br_raw = frame[br_y:br_y+c_h, br_x:br_x+c_w]
                 if crop_br_raw.size > 0: crops.append(cv2.rotate(crop_br_raw, cv2.ROTATE_180))
                 
-                # 3. Top-Right Corner (Flipped)
-                tr_x = max(0, x + bw - c_w)
-                crop_tr_raw = frame[y:y+c_h, tr_x:tr_x+c_w]
-                if crop_tr_raw.size > 0: crops.append(cv2.flip(crop_tr_raw, 1))
+                # 3. Full Card Crop (Resized to 96x160)
+                full_card = frame[y:y+bh, x:x+bw]
+                if full_card.size > 0: crops.append(full_card)
                 
                 best_conf = 0.0
                 best_label = None
                 best_crop_img = None
                 
                 for crop in crops:
-                    if crop.shape[0] > 8 and crop.shape[1] > 8:
+                    if crop.shape[0] > 10 and crop.shape[1] > 10:
                         pil_img = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
                         tensor_img = transform(pil_img).unsqueeze(0)
                         
@@ -175,10 +170,11 @@ def analyze_video_robust(video_path, total_hands=3):
                                 best_label = f"{RANK_NAMES[r_idx]} {SUIT_NAMES[s_idx]}"
                                 best_crop_img = crop
                                 
-                if best_conf >= 0.55 and best_label is not None:
+                if best_conf >= 0.60 and best_label is not None:
+                    # Draw green bounding box & label on card crop
                     card_crop = frame[max(0, y):min(height, y+bh), max(0, x):min(width, x+bw)]
                     cv2.rectangle(card_crop, (0, 0), (card_crop.shape[1]-1, card_crop.shape[0]-1), (0, 255, 0), 3)
-                    cv2.putText(card_crop, best_label, (5, max(18, card_crop.shape[0] - 8)),
+                    cv2.putText(card_crop, f"{best_label} ({best_conf*100:.0f}%)", (5, max(18, card_crop.shape[0] - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
                     
                     _, crop_buffer = cv2.imencode('.jpg', card_crop)
@@ -195,7 +191,7 @@ def analyze_video_robust(video_path, total_hands=3):
 
     cap.release()
     
-    # Fast Deal Debounce & Deduplication
+    # Fast Deal Debounce & Deduplication (80ms min inter-card gap)
     card_events = []
     last_emitted_box = None
     last_emitted_time = -999.0
@@ -247,4 +243,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_robust(v_path, t_hands)
+        analyze_video_perfect(v_path, t_hands)
