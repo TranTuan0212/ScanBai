@@ -28,15 +28,35 @@ final class CameraManager: NSObject, ObservableObject {
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "com.cardlink.camera.sessionQueue", qos: .userInitiated)
     
-    var onFrameCaptured: ((CVPixelBuffer, CGImagePropertyOrientation) -> Void)?
+    @Published var volumeTriggerCount: Int = 0
+    var onVolumeButtonPressed: (() -> Void)?
     
     override init() {
         super.init()
         setupOrientationObserver()
+        setupVolumeButtonListener()
     }
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        AVAudioSession.sharedInstance().removeObserver(self, forKeyPath: "outputVolume")
+    }
+    
+    /// Hardware Volume Button (+) Listener for instant 0ms deal session trigger
+    private func setupVolumeButtonListener() {
+        let audioSession = AVAudioSession.sharedInstance()
+        try? audioSession.setCategory(.ambient, options: .mixWithOthers)
+        try? audioSession.setActive(true)
+        audioSession.addObserver(self, forKeyPath: "outputVolume", options: [.new, .old], context: nil)
+    }
+    
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == "outputVolume" {
+            DispatchQueue.main.async {
+                self.volumeTriggerCount += 1
+                self.onVolumeButtonPressed?()
+            }
+        }
     }
     
     /// Listen for physical iPhone rotation (Portrait, Landscape Left, Landscape Right)
