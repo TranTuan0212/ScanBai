@@ -318,13 +318,6 @@ final class CameraManager: NSObject, ObservableObject {
             print("❌ [iOS Camera] Configuration failed: \(error)")
         }
     }
-            }
-            
-            device.unlockForConfiguration()
-        } catch {
-            print("❌ [iOS Camera] Failed locking device configuration: \(error)")
-        }
-    }
     
     func switchCamera() {
         sessionQueue.async { [weak self] in
