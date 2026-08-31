@@ -94,7 +94,8 @@ final class CardSlowMoSlicer: ObservableObject {
             return
         }
         
-        if lastEmitTimestamp > 0 && currentTime - lastEmitTimestamp < 0.22 {
+        // Support Ultra-Fast Dealing (Up to 12 cards per second -> 0.08s / 80ms minimum gap)
+        if lastEmitTimestamp > 0 && currentTime - lastEmitTimestamp < 0.08 {
             return
         }
         
@@ -106,8 +107,8 @@ final class CardSlowMoSlicer: ObservableObject {
             activeFrames.removeFirst()
         }
         
-        // Trigger slot emission when track is confirmed
-        if detection.isConfirmed || consecutiveFrameCount >= 2 {
+        // Trigger slot emission when track is confirmed (Even single high-confidence frame)
+        if detection.isConfirmed || consecutiveFrameCount >= 1 {
             isCardActive = true
             
             if !hasSentCurrentCardSlot {
