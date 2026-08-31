@@ -297,27 +297,45 @@
         }
     });
 
-    // Draw Real-Time Green Bounding Boxes on Overlay Canvas during Video Playback
+    // Precise Canvas Overlay Rendering with Aspect Ratio Letterboxing Support
     videoPlayer.addEventListener('timeupdate', () => {
         overlayCanvas.width = videoPlayer.clientWidth;
         overlayCanvas.height = videoPlayer.clientHeight;
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
+        if (!videoPlayer.videoWidth || !videoPlayer.videoHeight) return;
+
+        const videoAspect = videoPlayer.videoWidth / videoPlayer.videoHeight;
+        const containerAspect = videoPlayer.clientWidth / videoPlayer.clientHeight;
+
+        let renderW, renderH, offsetX, offsetY;
+        if (containerAspect > videoAspect) {
+            renderH = videoPlayer.clientHeight;
+            renderW = renderH * videoAspect;
+            offsetX = (videoPlayer.clientWidth - renderW) / 2;
+            offsetY = 0;
+        } else {
+            renderW = videoPlayer.clientWidth;
+            renderH = renderW / videoAspect;
+            offsetX = 0;
+            offsetY = (videoPlayer.clientHeight - renderH) / 2;
+        }
+
         const currentTime = videoPlayer.currentTime;
 
         activeRawEvents.forEach(ev => {
-            if (ev.normBox && Math.abs(currentTime - ev.timestamp) <= 0.60) {
+            if (ev.normBox && Math.abs(currentTime - ev.timestamp) <= 0.65) {
                 const nx = ev.normBox[0];
                 const ny = ev.normBox[1];
                 const nw = ev.normBox[2];
                 const nh = ev.normBox[3];
 
-                const x = nx * overlayCanvas.width;
-                const y = ny * overlayCanvas.height;
-                const w = nw * overlayCanvas.width;
-                const h = nh * overlayCanvas.height;
+                const x = offsetX + (nx * renderW);
+                const y = offsetY + (ny * renderH);
+                const w = nw * renderW;
+                const h = nh * renderH;
 
-                // Draw Green Bounding Box
+                // Draw Green Bounding Box directly over card in video content
                 ctx.strokeStyle = '#22c55e';
                 ctx.lineWidth = 3;
                 ctx.shadowColor = '#22c55e';

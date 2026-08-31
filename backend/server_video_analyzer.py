@@ -59,11 +59,30 @@ def compute_sharpness(img_bgr):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
+def has_playing_card_ink(crop_bgr):
+    """
+    Verifies that candidate crop contains printed Rank/Suit INK (Red or Black) on White Paper.
+    Rejects blank white walls, tiles, bedsheets, and white T-shirts!
+    """
+    if crop_bgr is None or crop_bgr.size == 0:
+        return False
+    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+    
+    # Red ink mask (Hearts ♥ and Diamonds ♦)
+    red1 = cv2.inRange(hsv, (0, 50, 40), (12, 255, 255))
+    red2 = cv2.inRange(hsv, (155, 50, 40), (180, 255, 255))
+    red_mask = cv2.bitwise_or(red1, red2)
+    
+    # Black ink mask (Spades ♠, Clubs ♣, and rank numbers)
+    black_mask = cv2.inRange(hsv, (0, 0, 0), (180, 110, 60))
+    
+    ink_mask = cv2.bitwise_or(red_mask, black_mask)
+    ink_ratio = float(cv2.countNonZero(ink_mask)) / float(crop_bgr.shape[0] * crop_bgr.shape[1])
+    
+    # Playing cards MUST have 1.2% to 30% printed ink inside paper
+    return (0.012 <= ink_ratio <= 0.30)
+
 def extract_held_cards_unwarp(full_frame, c, scale):
-    """
-    Extracts tilted held cards using cv2.minAreaRect + cv2.getPerspectiveTransform.
-    Un-warps tilted held cards into perfect 0.60 aspect ratio crops.
-    """
     rect = cv2.minAreaRect(c)
     (cx, cy), (w, h), angle = rect
     
@@ -94,17 +113,20 @@ def extract_held_cards_unwarp(full_frame, c, scale):
     if warped_card.size == 0:
         return None
         
-    # Crop Top-Left and Bottom-Right corner indices (0.60 ratio)
+    # Verify candidate card contains Rank/Suit INK (filters out white walls and T-shirts!)
+    if not has_playing_card_ink(warped_card):
+        return None
+        
     c_w = max(14, int(dst_w * 0.35))
     c_h = max(22, int(c_w / 0.60))
     
     crops = []
-    # 1. Top-Left
+    # 1. Top-Left Corner
     crop_tl = warped_card[0:min(dst_h, c_h), 0:min(dst_w, c_w)]
     if crop_tl.shape[0] > 10 and crop_tl.shape[1] > 10:
         crops.append(crop_tl)
         
-    # 2. Bottom-Right (180° rotated)
+    # 2. Bottom-Right Corner (180° rotated)
     br_y = max(0, dst_h - c_h)
     br_x = max(0, dst_w - c_w)
     crop_br = warped_card[br_y:dst_h, br_x:dst_w]
@@ -180,7 +202,6 @@ def analyze_video_multi_threshold(video_path, total_hands=3):
                 proc_w, proc_h = width, height
                 scale = 1.0
                 
-            # Dual Segmentation: HSV White Mask + Adaptive Thresholding for Dim Lighting
             hsv = cv2.cvtColor(proc_frame, cv2.COLOR_BGR2HSV)
             white_mask = cv2.inRange(hsv, (0, 0, 70), (180, 95, 255))
             
