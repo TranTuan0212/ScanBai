@@ -59,7 +59,31 @@ def compute_sharpness(img_bgr):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-def analyze_video_single_pass(video_path, total_hands=3):
+def is_valid_card_contour(c, proc_w, proc_h):
+    area = cv2.contourArea(c)
+    frame_area = proc_w * proc_h
+    # Card area must be between 0.4% and 25% of frame
+    if area < frame_area * 0.004 or area > frame_area * 0.25:
+        return False, None
+        
+    px, py, pbw, pbh = cv2.boundingRect(c)
+    aspect_ratio = float(pbw) / float(pbh)
+    
+    # Standard card ratio range
+    if not (0.35 <= aspect_ratio <= 2.20):
+        return False, None
+        
+    # Polygon approximation: Cards are 4-sided quadrilaterals!
+    peri = cv2.arcLength(c, True)
+    approx = cv2.approxPolyDP(c, 0.035 * peri, True)
+    
+    # Shirt sleeves and arms have curved borders with > 6 vertices
+    if len(approx) > 8:
+        return False, None
+        
+    return True, (px, py, pbw, pbh)
+
+def analyze_video_with_video_overlay(video_path, total_hands=3):
     if not os.path.exists(video_path):
         print(json.dumps({"error": "Video file not found"}))
         return
@@ -93,7 +117,6 @@ def analyze_video_single_pass(video_path, total_hands=3):
                     
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     
-    # Single-Pass Rolling Buffer Track State
     frame_idx = 0
     stride = 2 if total_frames > 120 else 1
     
@@ -131,21 +154,19 @@ def analyze_video_single_pass(video_path, total_hands=3):
             white_mask = cv2.inRange(hsv, (0, 0, 85), (180, 85, 255))
             cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            frame_area = proc_w * proc_h
-            best_contour = None
+            best_contour_box = None
             best_area = 0
             
             for c in cnts:
-                area = cv2.contourArea(c)
-                if area >= frame_area * 0.004 and area <= frame_area * 0.40:
-                    _, _, pbw, pbh = cv2.boundingRect(c)
-                    if 0.35 <= (float(pbw)/float(pbh)) <= 2.50:
-                        if area > best_area:
-                            best_area = area
-                            best_contour = c
+                is_valid, box = is_valid_card_contour(c, proc_w, proc_h)
+                if is_valid and box is not None:
+                    area = box[2] * box[3]
+                    if area > best_area:
+                        best_area = area
+                        best_contour_box = box
                             
-            if best_contour is not None:
-                px, py, pbw, pbh = cv2.boundingRect(best_contour)
+            if best_contour_box is not None:
+                px, py, pbw, pbh = best_contour_box
                 x = int(px / scale)
                 y = int(py / scale)
                 bw = int(pbw / scale)
@@ -158,12 +179,12 @@ def analyze_video_single_pass(video_path, total_hands=3):
                     'timestamp': timestamp,
                     'frame': frame,
                     'box': (x, y, bw, bh),
+                    'normBox': (x / width, y / height, bw / width, bh / height),
                     'sharpness': sharpness,
                     'card_roi': card_roi
                 })
             else:
                 if len(current_track) >= 2:
-                    # Track ended! Pick the single sharpest keyframe in current_track
                     best_item = max(current_track, key=lambda d: d['sharpness'])
                     f = best_item['frame']
                     x, y, bw, bh = best_item['box']
@@ -200,13 +221,13 @@ def analyze_video_single_pass(video_path, total_hands=3):
                                 'timestamp': float(best_item['timestamp']),
                                 'card_name': card_name,
                                 'confidence': float(conf),
+                                'normBox': best_item['normBox'],
                                 'crop_base64': crop_base64
                             })
                     current_track = []
                 else:
                     current_track = []
 
-        # Flush any remaining track at end of video
         if len(current_track) >= 2:
             best_item = max(current_track, key=lambda d: d['sharpness'])
             f = best_item['frame']
@@ -244,6 +265,7 @@ def analyze_video_single_pass(video_path, total_hands=3):
                         'timestamp': float(best_item['timestamp']),
                         'card_name': card_name,
                         'confidence': float(conf),
+                        'normBox': best_item['normBox'],
                         'crop_base64': crop_base64
                     })
 
@@ -260,6 +282,7 @@ def analyze_video_single_pass(video_path, total_hands=3):
             "cardName": ev["card_name"],
             "confidence": ev["confidence"],
             "timestamp": ev["timestamp"],
+            "normBox": ev["normBox"],
             "cropBase64": ev["crop_base64"]
         })
         
@@ -278,4 +301,4 @@ if __name__ == "__main__":
     else:
         v_path = sys.argv[1]
         t_hands = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        analyze_video_single_pass(v_path, t_hands)
+        analyze_video_with_video_overlay(v_path, t_hands)

@@ -25,7 +25,7 @@
             border: 1px solid #334155;
             border-radius: 16px;
             padding: 32px;
-            max-width: 800px;
+            max-width: 840px;
             width: 100%;
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
         }
@@ -54,7 +54,7 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
-        select, input[type="file"] {
+        select {
             width: 100%;
             padding: 12px;
             background-color: #0f172a;
@@ -66,7 +66,7 @@
         .drop-zone {
             border: 2px dashed #fbbf24;
             border-radius: 12px;
-            padding: 40px 20px;
+            padding: 30px 20px;
             text-align: center;
             background-color: rgba(251, 191, 36, 0.05);
             cursor: pointer;
@@ -119,6 +119,28 @@
             color: #38bdf8;
             font-family: monospace;
         }
+        .video-player-container {
+            position: relative;
+            margin-top: 24px;
+            width: 100%;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid #fbbf24;
+            display: none;
+        }
+        video {
+            width: 100%;
+            display: block;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
         .results-section {
             margin-top: 30px;
             display: none;
@@ -134,21 +156,21 @@
             color: #38bdf8;
             font-weight: 700;
             font-size: 14px;
-            margin-bottom: 8px;
+            margin-bottom: 12px;
         }
         .card-badges {
             display: flex;
-            gap: 8px;
+            gap: 12px;
             flex-wrap: wrap;
         }
         .card-badge {
             background-color: #1e293b;
             border: 1px solid #22c55e;
             color: #4ade80;
-            padding: 6px 12px;
+            padding: 4px 8px;
             border-radius: 6px;
             font-weight: 700;
-            font-size: 14px;
+            font-size: 12px;
             font-family: monospace;
         }
     </style>
@@ -188,6 +210,12 @@
         <p class="status-text" id="statusText">🚀 Đang tải video và chạy AI trên Server...</p>
     </div>
 
+    <!-- Live Video Player with Canvas Bounding Box Overlay -->
+    <div class="video-player-container" id="videoPlayerContainer">
+        <video id="videoPlayer" controls></video>
+        <canvas id="overlayCanvas"></canvas>
+    </div>
+
     <div class="results-section" id="resultsSection">
         <h2 style="font-size: 16px; color: #fbbf24; margin-bottom: 16px;">📊 KẾT QUẢ PHÂN TÍCH TỪ SERVER GPU:</h2>
         <div id="handsContainer"></div>
@@ -203,12 +231,21 @@
     const progressContainer = document.getElementById('progressContainer');
     const progressFill = document.getElementById('progressFill');
     const statusText = document.getElementById('statusText');
+    const videoPlayerContainer = document.getElementById('videoPlayerContainer');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const ctx = overlayCanvas.getContext('2d');
     const resultsSection = document.getElementById('resultsSection');
     const handsContainer = document.getElementById('handsContainer');
 
+    let activeRawEvents = [];
+
     videoInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
-            dropText.innerText = "🎬 File đã chọn: " + e.target.files[0].name + " (" + (e.target.files[0].size / (1024*1024)).toFixed(2) + " MB)";
+            const file = e.target.files[0];
+            dropText.innerText = "🎬 File đã chọn: " + file.name + " (" + (file.size / (1024*1024)).toFixed(2) + " MB)";
+            videoPlayer.src = URL.createObjectURL(file);
+            videoPlayerContainer.style.display = 'block';
         }
     });
 
@@ -234,7 +271,7 @@
 
         try {
             progressFill.style.width = '60%';
-            statusText.innerText = '⚙️ AI Model đang quét từng frame video trên GPU...';
+            statusText.innerText = '⚙️ AI Model đang quét và nhận diện lá bài...';
 
             const response = await fetch('/api/sessions/upload-video-analysis', {
                 method: 'POST',
@@ -248,7 +285,9 @@
 
             if (response.ok && data.status === 'ok') {
                 statusText.innerText = '✅ Phân tích hoàn tất! Tìm thấy ' + data.totalCards + ' mẫu bài.';
+                activeRawEvents = data.rawEvents || [];
                 renderResults(data);
+                videoPlayer.play();
             } else {
                 statusText.innerText = '❌ Lỗi phân tích: ' + (data.error || 'Server error');
             }
@@ -256,6 +295,45 @@
             btnSubmit.disabled = false;
             statusText.innerText = '❌ Lỗi kết nối Server: ' + err.message;
         }
+    });
+
+    // Draw Real-Time Green Bounding Boxes on Overlay Canvas during Video Playback
+    videoPlayer.addEventListener('timeupdate', () => {
+        overlayCanvas.width = videoPlayer.clientWidth;
+        overlayCanvas.height = videoPlayer.clientHeight;
+        ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+        const currentTime = videoPlayer.currentTime;
+
+        activeRawEvents.forEach(ev => {
+            if (ev.normBox && Math.abs(currentTime - ev.timestamp) <= 0.60) {
+                const nx = ev.normBox[0];
+                const ny = ev.normBox[1];
+                const nw = ev.normBox[2];
+                const nh = ev.normBox[3];
+
+                const x = nx * overlayCanvas.width;
+                const y = ny * overlayCanvas.height;
+                const w = nw * overlayCanvas.width;
+                const h = nh * overlayCanvas.height;
+
+                // Draw Green Bounding Box
+                ctx.strokeStyle = '#22c55e';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#22c55e';
+                ctx.shadowBlur = 8;
+                ctx.strokeRect(x, y, w, h);
+
+                // Draw Card Label Pill
+                ctx.fillStyle = '#22c55e';
+                ctx.shadowBlur = 0;
+                ctx.fillRect(x, Math.max(0, y - 22), 90, 20);
+
+                ctx.fillStyle = '#000000';
+                ctx.font = 'bold 11px monospace';
+                ctx.fillText(ev.card_name, x + 4, Math.max(14, y - 7));
+            }
+        });
     });
 
     function renderResults(data) {
@@ -287,7 +365,7 @@
                     cardItem.style.display = 'flex';
                     cardItem.style.flexDirection = 'column';
                     cardItem.style.alignItems = 'center';
-                    cardItem.style.gap = '4px';
+                    cardItem.style.gap = '6px';
 
                     const cardName = typeof cardObj === 'string' ? cardObj : cardObj.cardName;
                     const cropBase64 = typeof cardObj === 'object' ? cardObj.cropBase64 : '';
@@ -295,8 +373,8 @@
                     if (cropBase64) {
                         const img = document.createElement('img');
                         img.src = 'data:image/jpeg;base64,' + cropBase64;
-                        img.style.width = '64px';
-                        img.style.height = '90px';
+                        img.style.width = '70px';
+                        img.style.height = '100px';
                         img.style.objectFit = 'cover';
                         img.style.borderRadius = '6px';
                         img.style.border = '2px solid #22c55e';
